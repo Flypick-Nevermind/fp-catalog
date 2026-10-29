@@ -15,7 +15,8 @@ import WhatsAppButton from "@/components/WhatsAppButton";
 import { Product, ProductAttribute } from "@/types/database";
 import { formatIDR } from "@/lib/utils";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 interface ProductDetailPageProps {
   params: {

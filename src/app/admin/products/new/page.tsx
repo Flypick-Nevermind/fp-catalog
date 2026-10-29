@@ -1,13 +1,16 @@
 import React from "react";
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 import { ArrowLeft } from "lucide-react";
 import { createSupabaseAdmin } from "@/lib/supabase";
 import ProductForm from "@/components/ProductForm";
 import { Category } from "@/types/database";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function NewProductPage() {
+  noStore();
   let categories: Category[] = [];
 
   try {

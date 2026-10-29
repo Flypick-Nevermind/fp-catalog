@@ -3,7 +3,8 @@ import { supabasePublic } from "@/lib/supabase";
 import CatalogClient from "@/components/CatalogClient";
 import { Category, Product } from "@/types/database";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function HomePage() {
   const isSupabaseConfigured =

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -26,6 +26,32 @@ export default function AdminProductTable({
   const [confirmDeleteProduct, setConfirmDeleteProduct] =
     useState<Product | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Sinkronisasi daftar produk otomatis untuk multi-user (saat tab fokus atau setiap 5 detik)
+  useEffect(() => {
+    router.refresh();
+
+    const handleFocus = () => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    }, 5000);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
+      clearInterval(interval);
+    };
+  }, [router]);
 
   const getCoverImage = (product: Product): string | null => {
     const imgs = product.product_images;
@@ -65,6 +91,7 @@ export default function AdminProductTable({
         </p>
         <Link
           href="/admin/products/new"
+          prefetch={false}
           className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
         >
           + Tambah Produk Baru
@@ -160,6 +187,7 @@ export default function AdminProductTable({
                         {product.status === "published" && (
                           <Link
                             href={`/product/${product.slug}`}
+                            prefetch={false}
                             target="_blank"
                             title="Lihat di Katalog Publik"
                             className="rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
@@ -169,6 +197,7 @@ export default function AdminProductTable({
                         )}
                         <Link
                           href={`/admin/products/${product.id}`}
+                          prefetch={false}
                           title="Edit Produk"
                           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
                         >
@@ -248,4 +277,3 @@ export default function AdminProductTable({
     </>
   );
 }
-

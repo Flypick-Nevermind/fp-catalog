@@ -1,12 +1,14 @@
 import React from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { unstable_noStore as noStore } from "next/cache";
 import { ArrowLeft } from "lucide-react";
 import { createSupabaseAdmin } from "@/lib/supabase";
 import ProductForm from "@/components/ProductForm";
 import { Category, Product } from "@/types/database";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 interface EditProductPageProps {
   params: {
@@ -17,6 +19,7 @@ interface EditProductPageProps {
 export default async function EditProductPage({
   params,
 }: EditProductPageProps) {
+  noStore();
   const supabase = createSupabaseAdmin();
 
   const [{ data: product, error }, { data: categoriesData }] =

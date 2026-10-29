@@ -1,5 +1,6 @@
 import React from "react";
 import Link from "next/link";
+import { unstable_noStore as noStore } from "next/cache";
 import {
   Plus,
   Package,
@@ -15,8 +16,10 @@ import AdminProductTable from "@/components/AdminProductTable";
 import { Product } from "@/types/database";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function AdminDashboardPage() {
+  noStore();
   let products: Product[] = [];
   let dbError: string | null = null;
 

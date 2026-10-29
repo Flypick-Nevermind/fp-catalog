@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createSupabaseAdmin } from "@/lib/supabase";
 import { verifyAdminSession } from "@/app/actions/auth";
 import { slugify } from "@/lib/utils";
+import { Category, Product } from "@/types/database";
 
 const productSchema = z.object({
   id: z.string().uuid().optional(),
@@ -39,6 +40,63 @@ export interface ActionResponse<T = unknown> {
   success: boolean;
   error?: string;
   data?: T;
+}
+
+/**
+ * Mengambil data produk & daftar kategori paling mutakhir langsung dari database
+ * untuk sinkronisasi antar multi-user (menghindari Router Cache di browser).
+ */
+export async function getLatestProductAndCategoriesAction(
+  productId?: string
+): Promise<
+  ActionResponse<{
+    product: Product | null;
+    categories: Category[];
+  }>
+> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak." };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    const categoriesPromise = supabase
+      .from("categories")
+      .select("*")
+      .order("name", { ascending: true });
+
+    const productPromise = productId
+      ? supabase
+          .from("products")
+          .select(
+            `
+            *,
+            categories (id, name, slug),
+            product_images (id, product_id, image_url, is_primary, order_index)
+          `
+          )
+          .eq("id", productId)
+          .single()
+      : Promise.resolve({ data: null, error: null });
+
+    const [{ data: categoriesData }, { data: productData }] =
+      await Promise.all([categoriesPromise, productPromise]);
+
+    return {
+      success: true,
+      data: {
+        product: (productData as Product) || null,
+        categories: (categoriesData as Category[]) || [],
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Gagal memuat data terbaru.",
+    };
+  }
 }
 
 /**
@@ -173,9 +231,12 @@ export async function saveProductAction(
       }
     }
 
-    revalidatePath("/");
+    // Revalidate seluruh rute publik & admin agar user lain langsung mendapat data terbaru
+    revalidatePath("/", "layout");
     revalidatePath(`/product/${normalizedSlug}`);
-    revalidatePath("/admin");
+    revalidatePath("/admin", "layout");
+    revalidatePath(`/admin/products/${productId}`);
+    revalidatePath("/admin/products/new");
 
     return {
       success: true,
@@ -234,8 +295,8 @@ export async function deleteProductAction(
       }
     }
 
-    revalidatePath("/");
-    revalidatePath("/admin");
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
 
     return { success: true };
   } catch (err) {
@@ -278,8 +339,9 @@ export async function createCategoryAction(
       throw new Error(error?.message || "Gagal menambahkan kategori.");
     }
 
-    revalidatePath("/");
-    revalidatePath("/admin");
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+    revalidatePath("/admin/products/new");
 
     return { success: true, data };
   } catch (err) {
@@ -289,4 +351,3 @@ export async function createCategoryAction(
     };
   }
 }
-

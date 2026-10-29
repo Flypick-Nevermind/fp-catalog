@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,12 +16,14 @@ import {
   Calculator,
   Scale,
   TrendingUp,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import MultiImageUploader from "@/components/MultiImageUploader";
 import {
   saveProductAction,
   createCategoryAction,
+  getLatestProductAndCategoriesAction,
 } from "@/app/actions/product";
 import { Category, Product } from "@/types/database";
 import { formatIDR, slugify } from "@/lib/utils";
@@ -66,8 +68,8 @@ interface ProductFormProps {
  */
 function extractInitialWeightGrams(product?: Product | null): number {
   if (!product?.attributes) return 200;
-  const weightAttr = product.attributes.find(
-    (a) => a.key.toLowerCase().includes("berat")
+  const weightAttr = product.attributes.find((a) =>
+    a.key.toLowerCase().includes("berat")
   );
   if (!weightAttr) return 200;
 
@@ -82,6 +84,37 @@ function extractInitialWeightGrams(product?: Product | null): number {
   return Math.round(parsed);
 }
 
+function mapProductToFormValues(product: Product): ProductFormValues {
+  const sortedImages =
+    product.product_images
+      ?.slice()
+      .sort((a, b) => a.order_index - b.order_index)
+      .map((img, idx) => ({
+        image_url: img.image_url,
+        is_primary: img.is_primary,
+        order_index: idx,
+      })) || [];
+
+  const attrs =
+    product.attributes && product.attributes.length > 0
+      ? product.attributes
+      : [
+          { key: "Berat", value: "200 gram" },
+          { key: "Bahan", value: "" },
+        ];
+
+  return {
+    name: product.name || "",
+    slug: product.slug || "",
+    category_id: product.category_id || "",
+    price: Number(product.price ?? 44000),
+    status: product.status || "published",
+    description: product.description || "",
+    attributes: attrs,
+    images: sortedImages,
+  };
+}
+
 export default function ProductForm({
   initialData,
   categories: initialCategories,
@@ -89,6 +122,8 @@ export default function ProductForm({
   const router = useRouter();
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
@@ -101,50 +136,110 @@ export default function ProductForm({
   const [ratePerKg, setRatePerKg] = useState<number>(DEFAULT_RATE_PER_KG);
   const [baseItemPrice, setBaseItemPrice] = useState<number>(0);
 
-  const defaultImages =
-    initialData?.product_images
-      ?.slice()
-      .sort((a, b) => a.order_index - b.order_index)
-      .map((img, idx) => ({
-        image_url: img.image_url,
-        is_primary: img.is_primary,
-        order_index: idx,
-      })) || [];
-
-  const defaultAttributes =
-    initialData?.attributes && initialData.attributes.length > 0
-      ? initialData.attributes
-      : [
+  const defaultValues: ProductFormValues = initialData
+    ? mapProductToFormValues(initialData)
+    : {
+        name: "",
+        slug: "",
+        category_id: "",
+        price: 44000,
+        status: "published",
+        description: "",
+        attributes: [
           { key: "Berat", value: "200 gram" },
           { key: "Bahan", value: "" },
-        ];
+        ],
+        images: [],
+      };
+
+  const lastSnapshotRef = useRef<string>(
+    initialData ? JSON.stringify(mapProductToFormValues(initialData)) : ""
+  );
 
   const {
     register,
     control,
     handleSubmit,
     setValue,
+    reset,
     watch,
     getValues,
     formState: { errors, isSubmitting },
   } = useForm<ProductFormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: initialData?.name || "",
-      slug: initialData?.slug || "",
-      category_id: initialData?.category_id || "",
-      price: initialData?.price ?? 44000,
-      status: initialData?.status || "published",
-      description: initialData?.description || "",
-      attributes: defaultAttributes,
-      images: defaultImages,
-    },
+    defaultValues,
   });
 
   const { fields, append, remove } = useFieldArray({
     control,
     name: "attributes",
   });
+
+  /**
+   * Fungsi sinkronisasi real-time:
+   * Mengambil data terbaru dari Supabase agar jika User 1 baru saja menambah/mengedit
+   * produk atau kategori, User 2 langsung mendapatkan perubahan terakhir tersebut.
+   */
+  const syncLatestFromServer = useCallback(
+    async (forceOverwrite = false) => {
+      setIsSyncing(true);
+      try {
+        const res = await getLatestProductAndCategoriesAction(initialData?.id);
+        if (!res.success || !res.data) return;
+
+        // 1. Selalu perbarui daftar kategori terbaru
+        setCategories(res.data.categories);
+
+        // 2. Jika sedang di halaman Edit Produk, cek apakah ada perubahan terbaru di DB
+        if (initialData?.id && res.data.product) {
+          const freshFormValues = mapProductToFormValues(res.data.product);
+          const freshSnapshot = JSON.stringify(freshFormValues);
+
+          if (forceOverwrite || freshSnapshot !== lastSnapshotRef.current) {
+            lastSnapshotRef.current = freshSnapshot;
+            reset(freshFormValues, {
+              keepDirtyValues: !forceOverwrite,
+            });
+            setWeightGrams(extractInitialWeightGrams(res.data.product));
+            setSyncNotice(
+              "Data telah disinkronkan dengan perubahan terbaru dari database."
+            );
+            setTimeout(() => setSyncNotice(null), 4000);
+          }
+        }
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [initialData?.id, reset]
+  );
+
+  // Jalankan sinkronisasi saat halaman pertama kali dibuka, saat kembali ke tab browser,
+  // dan polling ringan setiap 5 detik untuk kolaborasi multi-user
+  useEffect(() => {
+    syncLatestFromServer(true);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        syncLatestFromServer(false);
+      }
+    };
+
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        syncLatestFromServer(false);
+      }
+    }, 5000);
+
+    return () => {
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      clearInterval(interval);
+    };
+  }, [syncLatestFromServer]);
 
   // Rumus Perhitungan Jastip sesuai Infografis:
   // Berat dikenakan = max(berat_kg, 0.2 kg)
@@ -153,13 +248,10 @@ export default function ProductForm({
   const actualKg = Math.max(0, (Number(weightGrams) || 0) / 1000);
   const chargeableKg =
     weightGrams > 0 ? Math.max(actualKg, MIN_CHARGEABLE_KG) : 0;
-  const isMinWeightApplied =
-    weightGrams > 0 && actualKg < MIN_CHARGEABLE_KG;
+  const isMinWeightApplied = weightGrams > 0 && actualKg < MIN_CHARGEABLE_KG;
 
   const weightCostBuyer = Math.round(chargeableKg * (Number(ratePerKg) || 0));
-  const weightCostProxy = Math.round(
-    chargeableKg * DEFAULT_PROXY_COST_PER_KG
-  );
+  const weightCostProxy = Math.round(chargeableKg * DEFAULT_PROXY_COST_PER_KG);
   const estimatedMargin = weightCostBuyer - weightCostProxy;
   const calculatedTotalPrice =
     Math.round(Number(baseItemPrice) || 0) + weightCostBuyer;
@@ -238,7 +330,34 @@ export default function ProductForm({
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      {/* Bar Sinkronisasi Multi-User */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-600 shadow-2xs">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>
+            Sinkronisasi Multi-Admin Aktif (otomatis memuat perubahan terbaru)
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => syncLatestFromServer(true)}
+          disabled={isSyncing}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
+        >
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`}
+          />
+          Muat Ulang Data Terbaru
+        </button>
+      </div>
+
+      {syncNotice && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-800">
+          {syncNotice}
+        </div>
+      )}
+
       {serverError && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {serverError}
@@ -750,6 +869,7 @@ export default function ProductForm({
 
               <Link
                 href="/admin"
+                prefetch={false}
                 className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
               >
                 <ArrowLeft className="h-4 w-4" />
