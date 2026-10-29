@@ -34,7 +34,8 @@ export default async function AdminDashboardPage() {
         product_images (id, product_id, image_url, is_primary, order_index)
       `
       )
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
 
     if (error) {
       dbError = error.message;

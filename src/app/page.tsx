@@ -31,7 +31,8 @@ export default async function HomePage() {
           `
           )
           .eq("status", "published")
-          .order("created_at", { ascending: true }),
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true }),
       ]);
 
     categories = (categoriesData as Category[]) || [];
