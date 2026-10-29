@@ -478,7 +478,7 @@ export default function ProductForm({
                     <input
                       type="number"
                       min={0}
-                      step={50}
+                      step="any"
                       value={weightGrams}
                       onChange={(e) => setWeightGrams(Number(e.target.value))}
                       placeholder="Contoh: 500"
@@ -530,7 +530,7 @@ export default function ProductForm({
                     <input
                       type="number"
                       min={0}
-                      step={1000}
+                      step="any"
                       value={baseItemPrice}
                       onChange={(e) =>
                         setBaseItemPrice(Number(e.target.value))
@@ -579,7 +579,7 @@ export default function ProductForm({
                     <input
                       type="number"
                       min={0}
-                      step={5000}
+                      step="any"
                       value={ratePerKg}
                       onChange={(e) => setRatePerKg(Number(e.target.value))}
                       className="w-full bg-transparent px-2 py-2 text-sm text-slate-900 focus:outline-none"
@@ -645,7 +645,7 @@ export default function ProductForm({
                 <input
                   type="number"
                   min={0}
-                  step="1000"
+                  step="any"
                   placeholder="44000"
                   {...register("price", {
                     onChange: () => {
