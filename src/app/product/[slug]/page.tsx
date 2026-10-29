@@ -104,9 +104,14 @@ export default async function ProductDetailPage({
             Kembali ke Katalog
           </Link>
 
-          <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white">
-              <ShoppingBag className="h-4 w-4" />
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="h-8 w-8 shrink-0 overflow-hidden rounded-lg shadow-2xs ring-1 ring-slate-200/80">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/assets/flypick-logo.png"
+                alt={storeName}
+                className="h-full w-full object-cover"
+              />
             </div>
             <span className="text-sm font-bold tracking-tight text-slate-900">
               {storeName}

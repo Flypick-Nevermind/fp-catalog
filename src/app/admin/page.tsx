@@ -57,8 +57,13 @@ export default async function AdminDashboardPage() {
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-xs font-bold text-white">
-              FP
+            <div className="h-9 w-9 shrink-0 overflow-hidden rounded-xl shadow-2xs ring-1 ring-slate-200">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/assets/flypick-logo.png"
+                alt="Flypick Logo"
+                className="h-full w-full object-cover"
+              />
             </div>
             <div>
               <h1 className="text-base font-bold text-slate-900">

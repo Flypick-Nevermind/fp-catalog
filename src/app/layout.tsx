@@ -11,6 +11,10 @@ export const metadata: Metadata = {
   },
   description:
     "Katalog produk modern dan responsif. Lihat spesifikasi lengkap dan pesan langsung melalui WhatsApp.",
+  icons: {
+    icon: "/assets/flypick-logo.png",
+    apple: "/assets/flypick-logo.png",
+  },
 };
 
 export default function RootLayout({

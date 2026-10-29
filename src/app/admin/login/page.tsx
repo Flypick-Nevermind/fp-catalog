@@ -39,8 +39,13 @@ function AdminLoginForm() {
   return (
     <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
       <div className="mb-6 flex flex-col items-center text-center">
-        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
-          <Lock className="h-5 w-5" />
+        <div className="mb-3 h-14 w-14 overflow-hidden rounded-2xl shadow-sm ring-1 ring-slate-200">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/assets/flypick-logo.png"
+            alt="Flypick Logo"
+            className="h-full w-full object-cover"
+          />
         </div>
         <h1 className="text-xl font-bold text-slate-900">
           Admin Panel Katalog

@@ -63,9 +63,14 @@ export default function CatalogClient({
       {/* Header Minimalis dengan Brand & Instant Search Bar */}
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/85 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm transition-transform group-hover:scale-105">
-              <ShoppingBag className="h-5 w-5" />
+          <Link href="/" className="flex items-center gap-3 group">
+            <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl shadow-sm ring-1 ring-slate-200/80 transition-transform group-hover:scale-105">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/assets/flypick-logo.png"
+                alt={storeName}
+                className="h-full w-full object-cover"
+              />
             </div>
             <div>
               <span className="text-lg font-bold tracking-tight text-slate-900">
