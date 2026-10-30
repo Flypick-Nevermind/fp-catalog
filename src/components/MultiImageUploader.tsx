@@ -9,6 +9,8 @@ import {
   Loader2,
   AlertCircle,
   ImagePlus,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { supabasePublic } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -38,7 +40,23 @@ export default function MultiImageUploader({
 }: MultiImageUploaderProps) {
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  /**
+   * Menormalisasi urutan array foto:
+   * Foto pada posisi pertama (index 0) selalu menjadi Cover Utama (is_primary = true)
+   * agar urutan #1, #2, #3 di Admin selalu 100% sama dengan yang tampil di halaman pengunjung.
+   */
+  const normalizeOrderedList = (
+    items: UploadedImageItem[]
+  ): UploadedImageItem[] => {
+    return items.map((item, idx) => ({
+      ...item,
+      is_primary: idx === 0,
+      order_index: idx,
+    }));
+  };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -132,14 +150,7 @@ export default function MultiImageUploader({
 
     if (uploadedResults.length > 0) {
       const merged = [...value, ...uploadedResults];
-      // Pastikan ada 1 gambar utama (is_primary)
-      const hasPrimary = merged.some((img) => img.is_primary);
-      const normalized = merged.map((img, idx) => ({
-        ...img,
-        is_primary: hasPrimary ? img.is_primary : idx === 0,
-        order_index: idx,
-      }));
-      onChange(normalized);
+      onChange(normalizeOrderedList(merged));
     }
 
     if (fileInputRef.current) {
@@ -147,19 +158,32 @@ export default function MultiImageUploader({
     }
   };
 
+  /**
+   * Menjadikan foto sebagai Cover Utama sekaligus memindahkannya ke urutan #1
+   */
   const handleSetPrimary = (targetIndex: number) => {
-    const updated = value.map((item, idx) => ({
-      ...item,
-      is_primary: idx === targetIndex,
-      order_index: idx,
-    }));
-    onChange(updated);
+    if (targetIndex === 0) return;
+    const next = [...value];
+    const [picked] = next.splice(targetIndex, 1);
+    next.unshift(picked);
+    onChange(normalizeOrderedList(next));
+  };
+
+  /**
+   * Menggeser urutan foto ke kiri atau ke kanan
+   */
+  const handleMoveImage = (fromIndex: number, toIndex: number) => {
+    if (toIndex < 0 || toIndex >= value.length) return;
+    const next = [...value];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    onChange(normalizeOrderedList(next));
   };
 
   const handleRemoveImage = async (targetIndex: number) => {
     const targetItem = value[targetIndex];
 
-    // Opsional: hapus dari bucket jika berasal dari product-media
+    // Hapus dari bucket jika berasal dari product-media
     const marker = "/storage/v1/object/public/product-media/";
     const markerIdx = targetItem.image_url.indexOf(marker);
     if (markerIdx !== -1) {
@@ -170,15 +194,7 @@ export default function MultiImageUploader({
     }
 
     const remaining = value.filter((_, idx) => idx !== targetIndex);
-    const hasPrimary = remaining.some((img) => img.is_primary);
-
-    const reindexed = remaining.map((item, idx) => ({
-      ...item,
-      is_primary: hasPrimary ? item.is_primary : idx === 0,
-      order_index: idx,
-    }));
-
-    onChange(reindexed);
+    onChange(normalizeOrderedList(remaining));
   };
 
   return (
@@ -209,7 +225,8 @@ export default function MultiImageUploader({
           Klik untuk memilih beberapa foto produk
         </p>
         <p className="mt-1 text-xs text-slate-500">
-          Otomatis dikompresi ke WebP (Maks. 1200px, &lt; 200KB per foto)
+          Otomatis dikompresi ke WebP (Maks. 1200px, &lt; 200KB). Geser panah
+          atau drag foto untuk mengatur urutan.
         </p>
       </div>
 
@@ -227,54 +244,95 @@ export default function MultiImageUploader({
           {value.map((item, index) => (
             <div
               key={`${item.image_url}-${index}`}
+              draggable
+              onDragStart={() => setDraggedIndex(index)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => {
+                if (draggedIndex !== null && draggedIndex !== index) {
+                  handleMoveImage(draggedIndex, index);
+                }
+                setDraggedIndex(null);
+              }}
+              onDragEnd={() => setDraggedIndex(null)}
               className={cn(
-                "group relative aspect-square overflow-hidden rounded-xl border bg-slate-100 transition-all",
+                "group relative aspect-square cursor-grab overflow-hidden rounded-xl border bg-slate-100 transition-all active:cursor-grabbing",
                 item.is_primary
                   ? "ring-2 ring-slate-900 border-slate-900 shadow-sm"
-                  : "border-slate-200"
+                  : "border-slate-200",
+                draggedIndex === index && "opacity-50 scale-95"
               )}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={item.image_url}
                 alt={`Foto produk ${index + 1}`}
-                className="h-full w-full object-cover"
+                className="h-full w-full object-cover pointer-events-none"
               />
 
-              {/* Badge Cover Utama */}
-              {item.is_primary && (
-                <div className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-full bg-slate-900/90 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
-                  <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-                  Cover Utama
-                </div>
-              )}
-
-              {/* Overlay Aksi saat Hover */}
-              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                {!item.is_primary ? (
-                  <button
-                    type="button"
-                    onClick={() => handleSetPrimary(index)}
-                    className="flex items-center gap-1 rounded-lg bg-white/95 px-2.5 py-1.5 text-xs font-medium text-slate-900 shadow-sm transition hover:bg-white"
-                    title="Jadikan Cover Utama"
-                  >
-                    <Star className="h-3.5 w-3.5 text-amber-500" />
-                    Set Cover
-                  </button>
+              {/* Badge Nomor Urut & Cover Utama di Bagian Atas */}
+              <div className="absolute inset-x-2.5 top-2.5 flex items-center justify-between gap-1">
+                {item.is_primary ? (
+                  <div className="flex items-center gap-1 rounded-full bg-slate-900/90 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
+                    <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                    Cover Utama
+                  </div>
                 ) : (
-                  <span className="text-[11px] font-medium text-white/90">
-                    Utama
-                  </span>
+                  <span />
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => handleRemoveImage(index)}
-                  className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg bg-red-600/90 text-white shadow-sm transition hover:bg-red-600"
-                  title="Hapus Foto"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-bold text-white backdrop-blur-sm">
+                  #{index + 1}
+                </span>
+              </div>
+
+              {/* Tombol Geser Kiri / Kanan & Set Cover / Hapus di Bagian Bawah */}
+              <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 bg-gradient-to-t from-black/85 via-black/50 to-transparent p-2.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                <div className="flex items-center justify-between gap-1">
+                  {/* Geser Kiri & Kanan */}
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      onClick={() => handleMoveImage(index, index - 1)}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-slate-900 shadow-2xs transition hover:bg-white disabled:opacity-30"
+                      title="Geser ke kiri"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === value.length - 1}
+                      onClick={() => handleMoveImage(index, index + 1)}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-slate-900 shadow-2xs transition hover:bg-white disabled:opacity-30"
+                      title="Geser ke kanan"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Set Cover Utama */}
+                  {!item.is_primary && (
+                    <button
+                      type="button"
+                      onClick={() => handleSetPrimary(index)}
+                      className="flex items-center gap-1 rounded-lg bg-white/95 px-2 py-1 text-[11px] font-semibold text-slate-900 shadow-2xs transition hover:bg-white"
+                      title="Jadikan Cover Utama (#1)"
+                    >
+                      <Star className="h-3 w-3 text-amber-500" />
+                      Cover
+                    </button>
+                  )}
+
+                  {/* Hapus Foto */}
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveImage(index)}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-600/90 text-white shadow-2xs transition hover:bg-red-600"
+                    title="Hapus Foto"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -309,4 +367,3 @@ export default function MultiImageUploader({
     </div>
   );
 }
-
