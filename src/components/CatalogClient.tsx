@@ -7,11 +7,19 @@ import {
   X,
   ArrowUpRight,
   PackageOpen,
-  ShoppingBag,
   Sparkles,
+  ArrowUpDown,
 } from "lucide-react";
 import { Category, Product } from "@/types/database";
 import { formatIDR, cn } from "@/lib/utils";
+
+type SortOption =
+  | "oldest"
+  | "newest"
+  | "price-asc"
+  | "price-desc"
+  | "name-asc"
+  | "name-desc";
 
 interface CatalogClientProps {
   products: Product[];
@@ -26,9 +34,10 @@ export default function CatalogClient({
 }: CatalogClientProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<SortOption>("oldest");
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
+  const filteredAndSortedProducts = useMemo(() => {
+    const filtered = products.filter((product) => {
       const matchesCategory =
         selectedCategory === "all" ||
         product.category_id === selectedCategory ||
@@ -47,7 +56,32 @@ export default function CatalogClient({
         matchesCategory && (matchesName || matchesDesc || matchesCategoryName)
       );
     });
-  }, [products, selectedCategory, searchQuery]);
+
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case "newest": {
+          const timeDiff =
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          return timeDiff !== 0 ? timeDiff : b.id.localeCompare(a.id);
+        }
+        case "oldest": {
+          const timeDiff =
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          return timeDiff !== 0 ? timeDiff : a.id.localeCompare(b.id);
+        }
+        case "price-asc":
+          return Number(a.price) - Number(b.price);
+        case "price-desc":
+          return Number(b.price) - Number(a.price);
+        case "name-asc":
+          return a.name.localeCompare(b.name, "id-ID");
+        case "name-desc":
+          return b.name.localeCompare(a.name, "id-ID");
+        default:
+          return 0;
+      }
+    });
+  }, [products, selectedCategory, searchQuery, sortBy]);
 
   const getCoverImage = (product: Product): string | null => {
     const imgs = product.product_images;
@@ -125,9 +159,10 @@ export default function CatalogClient({
           </div>
         </div>
 
-        {/* Filter Chips / Tabs Kategori Dinamis */}
-        <div className="mb-8 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 pt-0.5 scrollbar-none">
+        {/* Baris Filter Kategori & Dropdown Sorting Produk */}
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          {/* Filter Chips / Tabs Kategori Dinamis */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 scrollbar-none">
             <button
               type="button"
               onClick={() => setSelectedCategory("all")}
@@ -159,10 +194,30 @@ export default function CatalogClient({
               );
             })}
           </div>
+
+          {/* Dropdown Sorting Produk */}
+          <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+            <div className="relative flex items-center">
+              <ArrowUpDown className="pointer-events-none absolute left-3.5 h-4 w-4 text-slate-500" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortOption)}
+                aria-label="Urutkan produk"
+                className=" cursor-pointer rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 focus:border-slate-900 focus:outline-none"
+              >
+                <option value="oldest">Urutan: Terlama – Terbaru</option>
+                <option value="newest">Urutan: Terbaru – Terlama</option>
+                <option value="price-asc">Harga: Termurah – Termahal</option>
+                <option value="price-desc">Harga: Termahal – Termurah</option>
+                <option value="name-asc">Nama: A – Z</option>
+                <option value="name-desc">Nama: Z – A</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         {/* Grid Katalog Produk Responsif (1 kolom mobile, 3-4 kolom desktop) */}
-        {filteredProducts.length === 0 ? (
+        {filteredAndSortedProducts.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white py-20 px-4 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
               <PackageOpen className="h-7 w-7" />
@@ -189,7 +244,7 @@ export default function CatalogClient({
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filteredProducts.map((product) => {
+            {filteredAndSortedProducts.map((product) => {
               const coverUrl = getCoverImage(product);
               const categoryName =
                 product.categories?.name || "Koleksi Umum";
@@ -266,4 +321,3 @@ export default function CatalogClient({
     </div>
   );
 }
-
