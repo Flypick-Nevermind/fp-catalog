@@ -14,9 +14,14 @@ import {
   ChevronRight,
   Search,
   X,
+  Copy,
 } from "lucide-react";
 import { Product } from "@/types/database";
-import { deleteProductAction } from "@/app/actions/product";
+import {
+  deleteProductAction,
+  toggleProductStatusAction,
+  duplicateProductAction,
+} from "@/app/actions/product";
 import { formatIDR, cn } from "@/lib/utils";
 
 interface AdminProductTableProps {
@@ -30,6 +35,10 @@ export default function AdminProductTable({
   const [confirmDeleteProduct, setConfirmDeleteProduct] =
     useState<Product | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // State Loading untuk Quick Toggle Status & Duplicate per Produk
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
   // State Pencarian & Pagination
   const [searchQuery, setSearchQuery] = useState("");
@@ -97,6 +106,32 @@ export default function AdminProductTable({
     const primary = imgs.find((i) => i.is_primary);
     if (primary) return primary.image_url;
     return imgs[0]?.image_url || null;
+  };
+
+  const handleQuickToggleStatus = async (product: Product) => {
+    const nextStatus =
+      product.status === "published" ? "draft" : "published";
+    setTogglingId(product.id);
+    const res = await toggleProductStatusAction(product.id, nextStatus);
+    setTogglingId(null);
+
+    if (!res.success) {
+      alert(res.error || "Gagal mengubah status produk.");
+      return;
+    }
+    router.refresh();
+  };
+
+  const handleDuplicateProduct = async (product: Product) => {
+    setDuplicatingId(product.id);
+    const res = await duplicateProductAction(product.id);
+    setDuplicatingId(null);
+
+    if (!res.success) {
+      alert(res.error || "Gagal menduplikasi produk.");
+      return;
+    }
+    router.refresh();
   };
 
   const handleConfirmDelete = async () => {
@@ -195,7 +230,7 @@ export default function AdminProductTable({
                 <th className="px-6 py-4">Produk</th>
                 <th className="px-6 py-4">Kategori</th>
                 <th className="px-6 py-4">Harga</th>
-                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4">Status (Klik Ubah)</th>
                 <th className="px-6 py-4 text-right">Aksi</th>
               </tr>
             </thead>
@@ -213,6 +248,8 @@ export default function AdminProductTable({
                 paginatedProducts.map((product, idx) => {
                   const rowNumber = startIndex + idx + 1;
                   const coverUrl = getCoverImage(product);
+                  const isToggling = togglingId === product.id;
+                  const isDuplicating = duplicatingId === product.id;
 
                   return (
                     <tr
@@ -263,26 +300,38 @@ export default function AdminProductTable({
                       </td>
 
                       <td className="px-6 py-4">
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
+                        <button
+                          type="button"
+                          disabled={isToggling}
+                          onClick={() => handleQuickToggleStatus(product)}
+                          title={`Klik untuk ubah menjadi ${
                             product.status === "published"
-                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20"
-                              : "bg-amber-50 text-amber-700 ring-1 ring-amber-600/20"
+                              ? "Draft"
+                              : "Published"
+                          }`}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition hover:scale-105 active:scale-95 disabled:opacity-50",
+                            product.status === "published"
+                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20 hover:bg-emerald-100"
+                              : "bg-amber-50 text-amber-700 ring-1 ring-amber-600/20 hover:bg-amber-100"
                           )}
                         >
-                          <span
-                            className={cn(
-                              "h-1.5 w-1.5 rounded-full",
-                              product.status === "published"
-                                ? "bg-emerald-500"
-                                : "bg-amber-500"
-                            )}
-                          />
+                          {isToggling ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <span
+                              className={cn(
+                                "h-1.5 w-1.5 rounded-full",
+                                product.status === "published"
+                                  ? "bg-emerald-500"
+                                  : "bg-amber-500"
+                              )}
+                            />
+                          )}
                           {product.status === "published"
                             ? "Published"
                             : "Draft"}
-                        </span>
+                        </button>
                       </td>
 
                       <td className="px-6 py-4 text-right">
@@ -298,6 +347,22 @@ export default function AdminProductTable({
                               <ExternalLink className="h-4 w-4" />
                             </Link>
                           )}
+
+                          <button
+                            type="button"
+                            disabled={isDuplicating}
+                            onClick={() => handleDuplicateProduct(product)}
+                            title="Duplikat Produk Ini"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50"
+                          >
+                            {isDuplicating ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
+                            Duplikat
+                          </button>
+
                           <Link
                             href={`/admin/products/${product.id}`}
                             prefetch={false}
@@ -307,6 +372,7 @@ export default function AdminProductTable({
                             <Edit3 className="h-3.5 w-3.5" />
                             Edit
                           </Link>
+
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteProduct(product)}

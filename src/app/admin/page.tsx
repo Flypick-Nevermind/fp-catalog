@@ -13,7 +13,8 @@ import {
 import { createSupabaseAdmin } from "@/lib/supabase";
 import { logoutAdminAction } from "@/app/actions/auth";
 import AdminProductTable from "@/components/AdminProductTable";
-import { Product } from "@/types/database";
+import AdminCategoryManager from "@/components/AdminCategoryManager";
+import { Category, Product } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -21,26 +22,37 @@ export const revalidate = 0;
 export default async function AdminDashboardPage() {
   noStore();
   let products: Product[] = [];
+  let categories: Category[] = [];
   let dbError: string | null = null;
 
   try {
     const supabase = createSupabaseAdmin();
-    const { data, error } = await supabase
-      .from("products")
-      .select(
+    const [
+      { data: productsData, error: productsErr },
+      { data: categoriesData },
+    ] = await Promise.all([
+      supabase
+        .from("products")
+        .select(
+          `
+          *,
+          categories (id, name, slug),
+          product_images (id, product_id, image_url, is_primary, order_index)
         `
-        *,
-        categories (id, name, slug),
-        product_images (id, product_id, image_url, is_primary, order_index)
-      `
-      )
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
+        )
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }),
+      supabase
+        .from("categories")
+        .select("*")
+        .order("name", { ascending: true }),
+    ]);
 
-    if (error) {
-      dbError = error.message;
+    if (productsErr) {
+      dbError = productsErr.message;
     } else {
-      products = (data as Product[]) || [];
+      products = (productsData as Product[]) || [];
+      categories = (categoriesData as Category[]) || [];
     }
   } catch (err) {
     dbError =
@@ -158,21 +170,29 @@ export default async function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Header Daftar Produk + CTA Tambah */}
+        {/* Header Daftar Produk + CTA Kelola Kategori & Tambah Produk */}
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Daftar Produk</h2>
             <p className="text-xs text-slate-500">
-              Kelola informasi produk, ketersediaan status, dan galeri foto.
+              Kelola informasi produk, klik badge status untuk ubah cepat, atau
+              duplikat produk.
             </p>
           </div>
-          <Link
-            href="/admin/products/new"
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Tambah Produk</span>
-          </Link>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <AdminCategoryManager
+              categories={categories}
+              products={products}
+            />
+            <Link
+              href="/admin/products/new"
+              prefetch={false}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Tambah Produk</span>
+            </Link>
+          </div>
         </div>
 
         {/* Tabel Daftar Produk */}
@@ -181,4 +201,3 @@ export default async function AdminDashboardPage() {
     </div>
   );
 }
-

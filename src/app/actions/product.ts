@@ -278,9 +278,18 @@ export async function deleteProductAction(
       throw new Error(deleteError.message);
     }
 
-    // Hapus objek dari bucket product-media jika berasal dari bucket tersebut
+    // Hapus objek dari bucket product-media hanya jika tidak dipakai oleh produk hasil duplikat lain
     if (images && images.length > 0) {
+      const urlsToCheck = images.map((i) => i.image_url);
+      const { data: stillUsed } = await supabase
+        .from("product_images")
+        .select("image_url")
+        .in("image_url", urlsToCheck);
+
+      const usedSet = new Set((stillUsed || []).map((u) => u.image_url));
+
       const storagePaths = images
+        .filter((img) => !usedSet.has(img.image_url))
         .map((img) => {
           const marker = "/storage/v1/object/public/product-media/";
           const idx = img.image_url.indexOf(marker);
@@ -307,7 +316,136 @@ export async function deleteProductAction(
 }
 
 /**
- * Membuat kategori baru secara cepat dari dalam form produk Admin.
+ * Mengubah status produk (Published <-> Draft) secara instan dengan 1 klik dari tabel Admin.
+ */
+export async function toggleProductStatusAction(
+  productId: string,
+  newStatus: "published" | "draft"
+): Promise<ActionResponse> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak: Sesi admin tidak valid." };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    const { data: updated, error } = await supabase
+      .from("products")
+      .update({ status: newStatus })
+      .eq("id", productId)
+      .select("slug")
+      .single();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    revalidatePath("/", "layout");
+    if (updated?.slug) {
+      revalidatePath(`/product/${updated.slug}`);
+    }
+    revalidatePath("/admin", "layout");
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error:
+        err instanceof Error ? err.message : "Gagal mengubah status produk.",
+    };
+  }
+}
+
+/**
+ * Menduplikasi produk beserta spesifikasi dan referensi fotonya (status awal: Draft).
+ */
+export async function duplicateProductAction(
+  productId: string
+): Promise<ActionResponse<{ id: string; name: string }>> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak: Sesi admin tidak valid." };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    // 1. Ambil produk sumber beserta fotonya
+    const { data: sourceProduct, error: fetchErr } = await supabase
+      .from("products")
+      .select(
+        `
+        *,
+        product_images (image_url, is_primary, order_index)
+      `
+      )
+      .eq("id", productId)
+      .single();
+
+    if (fetchErr || !sourceProduct) {
+      return {
+        success: false,
+        error: "Produk yang ingin diduplikasi tidak ditemukan.",
+      };
+    }
+
+    const shortCode = Math.random().toString(36).substring(2, 6);
+    const clonedName = `${sourceProduct.name} (Copy)`;
+    const clonedSlug = `${slugify(sourceProduct.slug)}-copy-${shortCode}`;
+
+    // 2. Insert produk baru dengan status 'draft' agar admin dapat mengecek dulu
+    const { data: newProduct, error: insertErr } = await supabase
+      .from("products")
+      .insert({
+        name: clonedName,
+        slug: clonedSlug,
+        description: sourceProduct.description || "",
+        price: sourceProduct.price,
+        category_id: sourceProduct.category_id,
+        attributes: sourceProduct.attributes || [],
+        status: "draft",
+      })
+      .select("id, name")
+      .single();
+
+    if (insertErr || !newProduct) {
+      throw new Error(insertErr?.message || "Gagal menduplikasi produk.");
+    }
+
+    // 3. Salin daftar foto produk jika ada
+    const sourceImages = sourceProduct.product_images as
+      | { image_url: string; is_primary: boolean; order_index: number }[]
+      | undefined;
+
+    if (sourceImages && sourceImages.length > 0) {
+      const imagesToInsert = sourceImages.map((img) => ({
+        product_id: newProduct.id,
+        image_url: img.image_url,
+        is_primary: img.is_primary,
+        order_index: img.order_index,
+      }));
+
+      await supabase.from("product_images").insert(imagesToInsert);
+    }
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+
+    return {
+      success: true,
+      data: { id: newProduct.id, name: newProduct.name },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Gagal menduplikasi produk.",
+    };
+  }
+}
+
+/**
+ * Membuat kategori baru secara cepat dari dalam form produk atau panel Kategori Admin.
  */
 export async function createCategoryAction(
   name: string
@@ -348,6 +486,94 @@ export async function createCategoryAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Gagal membuat kategori.",
+    };
+  }
+}
+
+/**
+ * Mengubah nama dan slug kategori yang sudah ada.
+ */
+export async function updateCategoryAction(
+  categoryId: string,
+  newName: string
+): Promise<ActionResponse<{ id: string; name: string; slug: string }>> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak." };
+    }
+
+    const trimmedName = newName.trim();
+    if (trimmedName.length < 2) {
+      return { success: false, error: "Nama kategori minimal 2 karakter." };
+    }
+
+    const newSlug = slugify(trimmedName);
+    const supabase = createSupabaseAdmin();
+
+    const { data, error } = await supabase
+      .from("categories")
+      .update({ name: trimmedName, slug: newSlug })
+      .eq("id", categoryId)
+      .select("id, name, slug")
+      .single();
+
+    if (error || !data) {
+      if (error?.code === "23505") {
+        return {
+          success: false,
+          error: "Nama/slug kategori tersebut sudah digunakan.",
+        };
+      }
+      throw new Error(error?.message || "Gagal memperbarui kategori.");
+    }
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+    revalidatePath("/admin/products/new");
+
+    return { success: true, data };
+  } catch (err) {
+    return {
+      success: false,
+      error:
+        err instanceof Error ? err.message : "Gagal memperbarui kategori.",
+    };
+  }
+}
+
+/**
+ * Menghapus kategori (produk di dalamnya akan otomatis menjadi 'Tanpa Kategori').
+ */
+export async function deleteCategoryAction(
+  categoryId: string
+): Promise<ActionResponse> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak." };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    const { error } = await supabase
+      .from("categories")
+      .delete()
+      .eq("id", categoryId);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+    revalidatePath("/admin/products/new");
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Gagal menghapus kategori.",
     };
   }
 }
