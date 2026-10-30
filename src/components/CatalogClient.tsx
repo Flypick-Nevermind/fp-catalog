@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import {
   Search,
@@ -9,6 +9,8 @@ import {
   PackageOpen,
   Sparkles,
   ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Category, Product } from "@/types/database";
 import { formatIDR, cn } from "@/lib/utils";
@@ -20,6 +22,8 @@ type SortOption =
   | "price-desc"
   | "name-asc"
   | "name-desc";
+
+const ITEMS_PER_LOAD = 12; // Kelipatan 2, 3, dan 4 agar baris grid selalu rata di semua ukuran layar
 
 interface CatalogClientProps {
   products: Product[];
@@ -35,6 +39,12 @@ export default function CatalogClient({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [sortBy, setSortBy] = useState<SortOption>("oldest");
+  const [visibleCount, setVisibleCount] = useState<number>(ITEMS_PER_LOAD);
+
+  // Reset jumlah produk yang tampil ke 12 setiap kali filter/pencarian/urutan berubah
+  useEffect(() => {
+    setVisibleCount(ITEMS_PER_LOAD);
+  }, [searchQuery, selectedCategory, sortBy]);
 
   const filteredAndSortedProducts = useMemo(() => {
     const filtered = products.filter((product) => {
@@ -82,6 +92,11 @@ export default function CatalogClient({
       }
     });
   }, [products, selectedCategory, searchQuery, sortBy]);
+
+  const totalFiltered = filteredAndSortedProducts.length;
+  const visibleProducts = filteredAndSortedProducts.slice(0, visibleCount);
+  const hasMore = visibleCount < totalFiltered;
+  const remainingCount = Math.max(0, totalFiltered - visibleCount);
 
   const getCoverImage = (product: Product): string | null => {
     const imgs = product.product_images;
@@ -203,7 +218,7 @@ export default function CatalogClient({
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
                 aria-label="Urutkan produk"
-                className=" cursor-pointer rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 focus:border-slate-900 focus:outline-none"
+                className="cursor-pointer rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 focus:border-slate-900 focus:outline-none"
               >
                 <option value="oldest">Urutan: Terlama – Terbaru</option>
                 <option value="newest">Urutan: Terbaru – Terlama</option>
@@ -217,7 +232,7 @@ export default function CatalogClient({
         </div>
 
         {/* Grid Katalog Produk Responsif (1 kolom mobile, 3-4 kolom desktop) */}
-        {filteredAndSortedProducts.length === 0 ? (
+        {totalFiltered === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white py-20 px-4 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
               <PackageOpen className="h-7 w-7" />
@@ -243,68 +258,128 @@ export default function CatalogClient({
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filteredAndSortedProducts.map((product) => {
-              const coverUrl = getCoverImage(product);
-              const categoryName =
-                product.categories?.name || "Koleksi Umum";
+          <>
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {visibleProducts.map((product) => {
+                const coverUrl = getCoverImage(product);
+                const categoryName =
+                  product.categories?.name || "Koleksi Umum";
 
-              return (
-                <article
-                  key={product.id}
-                  className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md"
-                >
-                  {/* Gambar Cover (Aspect Square) */}
-                  <Link
-                    href={`/product/${product.slug}`}
-                    className="relative aspect-square w-full overflow-hidden bg-slate-100"
+                return (
+                  <article
+                    key={product.id}
+                    className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md"
                   >
-                    {coverUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={coverUrl}
-                        alt={product.name}
-                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
-                        Tanpa Foto
+                    {/* Gambar Cover (Aspect Square) */}
+                    <Link
+                      href={`/product/${product.slug}`}
+                      className="relative aspect-square w-full overflow-hidden bg-slate-100"
+                    >
+                      {coverUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={coverUrl}
+                          alt={product.name}
+                          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
+                          Tanpa Foto
+                        </div>
+                      )}
+
+                      {/* Badge Kategori */}
+                      <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-800 shadow-sm backdrop-blur-sm">
+                        {categoryName}
+                      </span>
+                    </Link>
+
+                    {/* Body Card */}
+                    <div className="flex flex-1 flex-col justify-between p-5">
+                      <div>
+                        <Link href={`/product/${product.slug}`}>
+                          <h2 className="line-clamp-2 text-base font-semibold text-slate-900 transition-colors group-hover:text-slate-700">
+                            {product.name}
+                          </h2>
+                        </Link>
+                        <p className="mt-2 text-lg font-bold text-slate-900">
+                          {formatIDR(Number(product.price))}
+                        </p>
                       </div>
-                    )}
 
-                    {/* Badge Kategori */}
-                    <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-800 shadow-sm backdrop-blur-sm">
-                      {categoryName}
-                    </span>
-                  </Link>
-
-                  {/* Body Card */}
-                  <div className="flex flex-1 flex-col justify-between p-5">
-                    <div>
-                      <Link href={`/product/${product.slug}`}>
-                        <h2 className="line-clamp-2 text-base font-semibold text-slate-900 transition-colors group-hover:text-slate-700">
-                          {product.name}
-                        </h2>
-                      </Link>
-                      <p className="mt-2 text-lg font-bold text-slate-900">
-                        {formatIDR(Number(product.price))}
-                      </p>
+                      <div className="mt-5 pt-3 border-t border-slate-100">
+                        <Link
+                          href={`/product/${product.slug}`}
+                          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+                        >
+                          <span>Lihat Detail</span>
+                          <ArrowUpRight className="h-4 w-4" />
+                        </Link>
+                      </div>
                     </div>
+                  </article>
+                );
+              })}
+            </div>
 
-                    <div className="mt-5 pt-3 border-t border-slate-100">
-                      <Link
-                        href={`/product/${product.slug}`}
-                        className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-slate-800"
-                      >
-                        <span>Lihat Detail</span>
-                        <ArrowUpRight className="h-4 w-4" />
-                      </Link>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+            {/* Bagian Load More & Indikator Jumlah Produk */}
+            <div className="mt-12 flex flex-col items-center justify-center gap-4">
+              <p className="text-xs font-medium text-slate-500">
+                Menampilkan{" "}
+                <span className="font-bold text-slate-900">
+                  {visibleProducts.length}
+                </span>{" "}
+                dari{" "}
+                <span className="font-bold text-slate-900">
+                  {totalFiltered}
+                </span>{" "}
+                produk
+              </p>
+
+              {/* Progress Bar Visual */}
+              <div className="h-1.5 w-48 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-slate-900 transition-all duration-300"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round((visibleProducts.length / totalFiltered) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
+
+              {hasMore ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVisibleCount((prev) => prev + ITEMS_PER_LOAD)
+                  }
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-6 py-3 text-xs font-bold text-slate-900 shadow-2xs transition hover:border-slate-900 hover:bg-slate-900 hover:text-white active:scale-[0.99]"
+                >
+                  <span>
+                    Muat Lebih Banyak (
+                    {Math.min(ITEMS_PER_LOAD, remainingCount)} Produk Lagi)
+                  </span>
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+              ) : (
+                totalFiltered > ITEMS_PER_LOAD && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisibleCount(ITEMS_PER_LOAD);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                  >
+                    <span>Tampilkan Lebih Sedikit</span>
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  </button>
+                )
+              )}
+            </div>
+          </>
         )}
       </main>
 
