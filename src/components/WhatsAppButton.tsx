@@ -27,8 +27,11 @@ export default function WhatsAppButton({
   const resolvedUrl = pageUrl || `${fallbackSiteUrl}/product/${productSlug}`;
 
   const rawPhone =
-    phoneNumber || process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "6281234567890";
-  const cleanPhone = rawPhone.replace(/[^0-9]/g, "");
+    phoneNumber || process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || "";
+  const digitsOnly = rawPhone.replace(/[^0-9]/g, "");
+  const cleanPhone = digitsOnly.startsWith("0")
+    ? `62${digitsOnly.slice(1)}`
+    : digitsOnly;
 
   // Format pesan sesuai spesifikasi:
   // "Halo, saya tertarik dengan produk [Nama Produk] (Link: [URL Halaman])"
