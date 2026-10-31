@@ -1,19 +1,10 @@
 import React from "react";
 import Link from "next/link";
 import { unstable_noStore as noStore } from "next/cache";
-import {
-  Plus,
-  Package,
-  CheckCircle2,
-  FileEdit,
-  ExternalLink,
-  LogOut,
-  AlertCircle,
-} from "lucide-react";
+import { ExternalLink, LogOut, AlertCircle } from "lucide-react";
 import { createSupabaseAdmin } from "@/lib/supabase";
 import { logoutAdminAction } from "@/app/actions/auth";
 import AdminProductTable from "@/components/AdminProductTable";
-import AdminCategoryManager from "@/components/AdminCategoryManager";
 import { Category, Product } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -60,12 +51,6 @@ export default async function AdminDashboardPage() {
         ? err.message
         : "Konfigurasi Supabase belum lengkap.";
   }
-
-  const totalProducts = products.length;
-  const publishedCount = products.filter(
-    (p) => p.status === "published"
-  ).length;
-  const draftCount = products.filter((p) => p.status === "draft").length;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -125,78 +110,8 @@ export default async function AdminDashboardPage() {
           </div>
         )}
 
-        {/* Ringkasan Statistik Produk */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                Total Produk
-              </p>
-              <p className="mt-2 text-3xl font-extrabold text-slate-900">
-                {totalProducts}
-              </p>
-            </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
-              <Package className="h-6 w-6" />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-emerald-600">
-                Produk Aktif (Published)
-              </p>
-              <p className="mt-2 text-3xl font-extrabold text-slate-900">
-                {publishedCount}
-              </p>
-            </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
-              <CheckCircle2 className="h-6 w-6" />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-amber-600">
-                Produk Draft
-              </p>
-              <p className="mt-2 text-3xl font-extrabold text-slate-900">
-                {draftCount}
-              </p>
-            </div>
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
-              <FileEdit className="h-6 w-6" />
-            </div>
-          </div>
-        </div>
-
-        {/* Header Daftar Produk + CTA Kelola Kategori & Tambah Produk */}
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">Daftar Produk</h2>
-            <p className="text-xs text-slate-500">
-              Kelola informasi produk, klik badge status untuk ubah cepat, atau
-              duplikat produk.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <AdminCategoryManager
-              categories={categories}
-              products={products}
-            />
-            <Link
-              href="/admin/products/new"
-              prefetch={false}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Tambah Produk</span>
-            </Link>
-          </div>
-        </div>
-
-        {/* Tabel Daftar Produk */}
-        <AdminProductTable products={products} />
+        {/* Card Statistik Interaktif + Tabel Daftar Produk */}
+        <AdminProductTable products={products} categories={categories} />
       </main>
     </div>
   );
