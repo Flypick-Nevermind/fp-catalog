@@ -325,6 +325,10 @@ export default function ProductForm({
       return;
     }
 
+    if (typeof window !== "undefined" && response.data?.id) {
+      sessionStorage.setItem("fp_admin_last_edited_id", response.data.id);
+    }
+
     router.push("/admin");
     router.refresh();
   };

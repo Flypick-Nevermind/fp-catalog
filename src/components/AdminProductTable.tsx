@@ -30,6 +30,16 @@ import { formatIDR, cn } from "@/lib/utils";
 
 type StatusFilter = "all" | "published" | "draft";
 
+export const ADMIN_TABLE_STATE_KEY = "fp_admin_table_state";
+export const ADMIN_LAST_EDITED_ID_KEY = "fp_admin_last_edited_id";
+
+interface SavedTableState {
+  currentPage: number;
+  pageSize: number;
+  statusFilter: StatusFilter;
+  searchQuery: string;
+}
+
 interface AdminProductTableProps {
   products: Product[];
   categories?: Category[];
@@ -48,11 +58,95 @@ export default function AdminProductTable({
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
-  // State Filter Status (dari klik Card di atas), Pencarian & Pagination
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  // State Filter Status, Pencarian & Pagination (diinisialisasi dari sessionStorage agar tidak reset ke page 1)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
+    if (typeof window === "undefined") return "all";
+    try {
+      const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<SavedTableState>;
+        if (
+          parsed.statusFilter === "all" ||
+          parsed.statusFilter === "published" ||
+          parsed.statusFilter === "draft"
+        ) {
+          return parsed.statusFilter;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return "all";
+  });
+
+  const [searchQuery, setSearchQuery] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<SavedTableState>;
+        return parsed.searchQuery || "";
+      }
+    } catch {
+      // ignore
+    }
+    return "";
+  });
+
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window === "undefined") return 10;
+    try {
+      const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<SavedTableState>;
+        if (parsed.pageSize && [10, 20, 50].includes(parsed.pageSize)) {
+          return parsed.pageSize;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return 10;
+  });
+
+  const [currentPage, setCurrentPage] = useState<number>(() => {
+    if (typeof window === "undefined") return 1;
+    try {
+      const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<SavedTableState>;
+        if (parsed.currentPage && parsed.currentPage >= 1) {
+          return parsed.currentPage;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return 1;
+  });
+
+  const [highlightedProductId, setHighlightedProductId] = useState<
+    string | null
+  >(null);
+
+  // Simpan perubahan state halaman/filter ke sessionStorage setiap kali berubah
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stateToSave: SavedTableState = {
+        currentPage,
+        pageSize,
+        statusFilter,
+        searchQuery,
+      };
+      sessionStorage.setItem(
+        ADMIN_TABLE_STATE_KEY,
+        JSON.stringify(stateToSave)
+      );
+    } catch {
+      // ignore
+    }
+  }, [currentPage, pageSize, statusFilter, searchQuery]);
 
   // Sinkronisasi daftar produk otomatis untuk multi-user (saat tab fokus atau setiap 5 detik)
   useEffect(() => {
@@ -111,12 +205,34 @@ export default function AdminProductTable({
   const totalItems = filteredProducts.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
-  // Pastikan currentPage tetap valid saat filter atau jumlah produk berubah
+  // Jika baru selesai Edit Produk tertentu, pastikan otomatis membuka halaman tempat produk tersebut berada
   useEffect(() => {
-    if (currentPage > totalPages) {
+    if (typeof window === "undefined") return;
+    const editedId = sessionStorage.getItem(ADMIN_LAST_EDITED_ID_KEY);
+    if (!editedId) return;
+
+    sessionStorage.removeItem(ADMIN_LAST_EDITED_ID_KEY);
+    setHighlightedProductId(editedId);
+
+    const idxInFiltered = filteredProducts.findIndex((p) => p.id === editedId);
+    if (idxInFiltered !== -1) {
+      const targetPage = Math.floor(idxInFiltered / pageSize) + 1;
+      setCurrentPage(targetPage);
+    }
+
+    const timer = setTimeout(() => {
+      setHighlightedProductId(null);
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [filteredProducts, pageSize]);
+
+  // Pastikan currentPage tetap valid saat filter atau jumlah produk berkurang
+  useEffect(() => {
+    if (totalItems > 0 && currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [currentPage, totalPages]);
+  }, [currentPage, totalPages, totalItems]);
 
   const startIndex = (currentPage - 1) * pageSize;
   const paginatedProducts = filteredProducts.slice(
@@ -443,11 +559,17 @@ export default function AdminProductTable({
                     const coverUrl = getCoverImage(product);
                     const isToggling = togglingId === product.id;
                     const isDuplicating = duplicatingId === product.id;
+                    const isHighlighted = highlightedProductId === product.id;
 
                     return (
                       <tr
                         key={product.id}
-                        className="transition-colors hover:bg-slate-50/70"
+                        className={cn(
+                          "transition-colors duration-500",
+                          isHighlighted
+                            ? "bg-sky-50/90 ring-1 ring-inset ring-sky-300"
+                            : "hover:bg-slate-50/70"
+                        )}
                       >
                         <td className="px-6 py-4 text-center text-xs font-semibold text-slate-500">
                           {rowNumber}
