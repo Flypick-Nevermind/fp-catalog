@@ -2,7 +2,10 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { ADMIN_COOKIE_NAME, computeAdminSessionToken } from "@/middleware";
+import {
+  ADMIN_COOKIE_NAME,
+  computeAdminSessionToken,
+} from "@/lib/auth-token";
 
 export interface AuthActionResult {
   success: boolean;
@@ -12,16 +15,17 @@ export interface AuthActionResult {
 export async function loginAdminAction(
   password: string
 ): Promise<AuthActionResult> {
-  const expectedPassword = process.env.ADMIN_SECRET_PASSWORD;
+  const expectedPassword = (process.env.ADMIN_SECRET_PASSWORD || "").trim();
 
   if (!expectedPassword) {
     return {
       success: false,
-      error: "ADMIN_SECRET_PASSWORD belum dikonfigurasi di server (.env.local).",
+      error:
+        "ADMIN_SECRET_PASSWORD belum dikonfigurasi di server (.env / Environment Variables).",
     };
   }
 
-  if (password !== expectedPassword) {
+  if (password.trim() !== expectedPassword) {
     return {
       success: false,
       error: "Password admin tidak valid. Silakan coba kembali.",
@@ -57,4 +61,3 @@ export async function verifyAdminSession(): Promise<boolean> {
   const expectedToken = await computeAdminSessionToken();
   return sessionCookie === expectedToken;
 }
-

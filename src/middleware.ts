@@ -1,21 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-
-export const ADMIN_COOKIE_NAME = "fp_admin_session";
-
-/**
- * Menghasilkan token sesi statis berbasis secret menggunakan Web Crypto API (kompatibel di Edge Runtime)
- */
-export async function computeAdminSessionToken(): Promise<string> {
-  const password = process.env.ADMIN_SECRET_PASSWORD || "";
-  const secret = process.env.ADMIN_SESSION_SECRET || "default-fp-catalog-secret";
-  const raw = `${password}:${secret}:fp-admin-v1`;
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(raw);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+import {
+  ADMIN_COOKIE_NAME,
+  computeAdminSessionToken,
+} from "@/lib/auth-token";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -50,4 +37,3 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: ["/admin/:path*"],
 };
-

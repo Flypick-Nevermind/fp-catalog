@@ -1,13 +1,12 @@
 "use client";
 
 import React, { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Lock, Loader2, ArrowLeft, ShieldAlert } from "lucide-react";
+import { Loader2, ArrowLeft, ShieldAlert } from "lucide-react";
 import { loginAdminAction } from "@/app/actions/auth";
 
 function AdminLoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("from") || "/admin";
 
@@ -28,8 +27,9 @@ function AdminLoginForm() {
         return;
       }
 
-      router.push(redirectTo);
-      router.refresh();
+      // Gunakan full page navigation agar HTTP-only cookie yang baru disetel
+      // langsung dikirim secara bersih ke Middleware tanpa terjebak Router Cache
+      window.location.assign(redirectTo);
     } catch {
       setError("Terjadi kesalahan saat memverifikasi sesi.");
       setIsLoading(false);
