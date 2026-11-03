@@ -30,6 +30,7 @@ import { formatIDR, slugify } from "@/lib/utils";
 
 const DEFAULT_RATE_PER_KG = 220000; // Rp 220.000 / kg sesuai aturan Jastip
 const DEFAULT_PROXY_COST_PER_KG = 200000; // Rp 200.000 / kg biaya proxy
+const DEFAULT_YUAN_MULTIPLIER = 2800; // Faktor pengali kurs Yuan (Rp 2.800 / ¥)
 const MIN_CHARGEABLE_KG = 0.2; // Minimum 200 gram (0,2 kg)
 
 const formSchema = z.object({
@@ -64,13 +65,14 @@ interface ProductFormProps {
 }
 
 /**
- * Mengekstrak angka gram dari atribut "Berat" jika sedang mode Edit Produk
+ * Mengekstrak angka gram dari atribut "Weight" / "Berat" jika sedang mode Edit Produk
  */
 function extractInitialWeightGrams(product?: Product | null): number {
   if (!product?.attributes) return 200;
-  const weightAttr = product.attributes.find((a) =>
-    a.key.toLowerCase().includes("berat")
-  );
+  const weightAttr = product.attributes.find((a) => {
+    const k = a.key.toLowerCase();
+    return k.includes("weight") || k.includes("berat");
+  });
   if (!weightAttr) return 200;
 
   const val = weightAttr.value.toLowerCase();
@@ -98,10 +100,7 @@ function mapProductToFormValues(product: Product): ProductFormValues {
   const attrs =
     product.attributes && product.attributes.length > 0
       ? product.attributes
-      : [
-          { key: "Berat", value: "200 gram" },
-          { key: "Bahan", value: "" },
-        ];
+      : [{ key: "Weight", value: "" }];
 
   return {
     name: product.name || "",
@@ -128,12 +127,16 @@ export default function ProductForm({
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
 
-  // State Kalkulator Otomatis Jastip (Berat & Harga)
+  // State Kalkulator Otomatis Jastip (Berat, Kurs Yuan & Harga)
   const [useAutoCalc, setUseAutoCalc] = useState<boolean>(!initialData);
   const [weightGrams, setWeightGrams] = useState<number>(() =>
     extractInitialWeightGrams(initialData)
   );
   const [ratePerKg, setRatePerKg] = useState<number>(DEFAULT_RATE_PER_KG);
+  const [yuanPrice, setYuanPrice] = useState<number>(0);
+  const [yuanMultiplier, setYuanMultiplier] = useState<number>(
+    DEFAULT_YUAN_MULTIPLIER
+  );
   const [baseItemPrice, setBaseItemPrice] = useState<number>(0);
 
   const defaultValues: ProductFormValues = initialData
@@ -145,10 +148,7 @@ export default function ProductForm({
         price: 44000,
         status: "published",
         description: "",
-        attributes: [
-          { key: "Berat", value: "200 gram" },
-          { key: "Bahan", value: "" },
-        ],
+        attributes: [{ key: "Weight", value: "" }],
         images: [],
       };
 
@@ -256,32 +256,11 @@ export default function ProductForm({
   const calculatedTotalPrice =
     Math.round(Number(baseItemPrice) || 0) + weightCostBuyer;
 
-  // Sinkronkan hasil kalkulasi ke field `price` dan atribut `Berat` secara otomatis
+  // Sinkronkan hasil kalkulasi ke field `price` secara otomatis (tanpa mengubah field spesifikasi Weight)
   useEffect(() => {
     if (!useAutoCalc) return;
-
     setValue("price", calculatedTotalPrice, { shouldValidate: true });
-
-    // Update juga baris spesifikasi "Berat" jika ada
-    const currentAttrs = getValues("attributes") || [];
-    const weightIdx = currentAttrs.findIndex(
-      (attr) => attr.key.trim().toLowerCase() === "berat"
-    );
-
-    if (weightIdx !== -1 && weightGrams > 0) {
-      const formattedWeight =
-        weightGrams >= 1000
-          ? `${(weightGrams / 1000).toLocaleString("id-ID")} kg (${weightGrams} gr)`
-          : `${weightGrams} gram`;
-      setValue(`attributes.${weightIdx}.value`, formattedWeight);
-    }
-  }, [
-    useAutoCalc,
-    calculatedTotalPrice,
-    weightGrams,
-    setValue,
-    getValues,
-  ]);
+  }, [useAutoCalc, calculatedTotalPrice, setValue]);
 
   const watchedName = watch("name");
 
@@ -458,8 +437,8 @@ export default function ProductForm({
                   Spesifikasi Produk (Atribut Dinamis)
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Atribut &ldquo;Berat&rdquo; otomatis tersinkronisasi saat Anda mengubah
-                  berat di kalkulator.
+                  Isi spesifikasi produk secara manual (misalnya Weight aktual
+                  barang).
                 </p>
               </div>
               <button
@@ -487,7 +466,7 @@ export default function ProductForm({
                     <div className="flex-1">
                       <input
                         type="text"
-                        placeholder="Label (mis: Berat / Bahan)"
+                        placeholder="Label (mis: Weight)"
                         {...register(`attributes.${index}.key`)}
                         className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                       />
@@ -638,29 +617,111 @@ export default function ProductForm({
                   </div>
                 </div>
 
-                {/* 2. Input Harga Asli Barang (Opsional) */}
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-700">
-                    Harga Barang Dasar (Rp){" "}
-                    <span className="font-normal text-slate-400">
-                      (Isi 0 jika hanya hitung tarif berat)
-                    </span>
-                  </label>
-                  <div className="flex items-center rounded-xl border border-slate-300 bg-white px-3.5 focus-within:border-sky-600">
-                    <span className="text-xs font-medium text-slate-400">
-                      Rp
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      step="any"
-                      value={baseItemPrice}
-                      onChange={(e) =>
-                        setBaseItemPrice(Number(e.target.value))
-                      }
-                      placeholder="0"
-                      className="w-full bg-transparent px-2 py-2 text-sm text-slate-900 focus:outline-none"
-                    />
+                {/* 2. Input Harga Yuan (¥) & Faktor Pengali Kurs (Default 2800) */}
+                <div className="rounded-xl border border-sky-200/70 bg-sky-50/40 p-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700">
+                        Harga Yuan (&yen;)
+                      </label>
+                      <div className="flex items-center rounded-xl border border-slate-300 bg-white px-3 focus-within:border-sky-600">
+                        <span className="text-xs font-semibold text-slate-400">
+                          &yen;
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={yuanPrice || ""}
+                          onChange={(e) => {
+                            const val = Number(e.target.value) || 0;
+                            setYuanPrice(val);
+                            setBaseItemPrice(
+                              Math.round(val * (Number(yuanMultiplier) || 0))
+                            );
+                          }}
+                          placeholder="Mis: 211"
+                          className="w-full bg-transparent px-2 py-2 text-sm font-semibold text-slate-900 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <label className="text-xs font-semibold text-slate-700">
+                          Pengali Kurs
+                        </label>
+                        {yuanMultiplier !== DEFAULT_YUAN_MULTIPLIER && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setYuanMultiplier(DEFAULT_YUAN_MULTIPLIER);
+                              if (yuanPrice > 0) {
+                                setBaseItemPrice(
+                                  Math.round(
+                                    yuanPrice * DEFAULT_YUAN_MULTIPLIER
+                                  )
+                                );
+                              }
+                            }}
+                            className="text-[10px] font-semibold text-sky-600 hover:underline"
+                          >
+                            Reset 2800
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center rounded-xl border border-slate-300 bg-white px-3 focus-within:border-sky-600">
+                        <span className="text-xs font-medium text-slate-400">
+                          &times;
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={yuanMultiplier}
+                          onChange={(e) => {
+                            const mult = Number(e.target.value) || 0;
+                            setYuanMultiplier(mult);
+                            if (yuanPrice > 0) {
+                              setBaseItemPrice(Math.round(yuanPrice * mult));
+                            }
+                          }}
+                          placeholder="2800"
+                          className="w-full bg-transparent px-1.5 py-2 text-sm font-semibold text-slate-900 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Hasil Konversi ke Harga Barang Dasar (Rp) — tetap bisa diedit manual */}
+                  <div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <label className="text-xs font-semibold text-slate-700">
+                        Harga Barang Dasar (Rp)
+                      </label>
+                      {yuanPrice > 0 && (
+                        <span className="text-[11px] font-medium text-sky-700">
+                          &yen;{yuanPrice.toLocaleString("id-ID")} &times;{" "}
+                          {yuanMultiplier.toLocaleString("id-ID")}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center rounded-xl border border-slate-300 bg-white px-3.5 focus-within:border-sky-600">
+                      <span className="text-xs font-medium text-slate-400">
+                        Rp
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={baseItemPrice}
+                        onChange={(e) => {
+                          setBaseItemPrice(Number(e.target.value));
+                        }}
+                        placeholder="0"
+                        className="w-full bg-transparent px-2 py-2 text-sm font-semibold text-slate-900 focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
 
