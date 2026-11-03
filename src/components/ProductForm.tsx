@@ -594,7 +594,6 @@ export default function ProductForm({
                   {/* Preset Cepat Berat Sesuai Tabel Infografis */}
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {[
-                      { label: "100 gr", val: 100 },
                       { label: "200 gr", val: 200 },
                       { label: "500 gr", val: 500 },
                       { label: "1 kg", val: 1000 },
@@ -656,13 +655,12 @@ export default function ProductForm({
                             type="button"
                             onClick={() => {
                               setYuanMultiplier(DEFAULT_YUAN_MULTIPLIER);
-                              if (yuanPrice > 0) {
-                                setBaseItemPrice(
-                                  Math.round(
-                                    yuanPrice * DEFAULT_YUAN_MULTIPLIER
-                                  )
-                                );
-                              }
+                              setBaseItemPrice(
+                                Math.round(
+                                  (Number(yuanPrice) || 0) *
+                                    DEFAULT_YUAN_MULTIPLIER
+                                )
+                              );
                             }}
                             className="text-[10px] font-semibold text-sky-600 hover:underline"
                           >
@@ -682,9 +680,9 @@ export default function ProductForm({
                           onChange={(e) => {
                             const mult = Number(e.target.value) || 0;
                             setYuanMultiplier(mult);
-                            if (yuanPrice > 0) {
-                              setBaseItemPrice(Math.round(yuanPrice * mult));
-                            }
+                            setBaseItemPrice(
+                              Math.round((Number(yuanPrice) || 0) * mult)
+                            );
                           }}
                           placeholder="2800"
                           className="w-full bg-transparent px-1.5 py-2 text-sm font-semibold text-slate-900 focus:outline-none"
@@ -693,7 +691,7 @@ export default function ProductForm({
                     </div>
                   </div>
 
-                  {/* Hasil Konversi ke Harga Barang Dasar (Rp) — tetap bisa diedit manual */}
+                  {/* Hasil Konversi ke Harga Barang Dasar (Rp) — otomatis (disabled) */}
                   <div>
                     <div className="mb-1 flex items-center justify-between">
                       <label className="text-xs font-semibold text-slate-700">
@@ -706,20 +704,19 @@ export default function ProductForm({
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center rounded-xl border border-slate-300 bg-white px-3.5 focus-within:border-sky-600">
+                    <div className="flex items-center rounded-xl border border-slate-200 bg-slate-100 px-3.5">
                       <span className="text-xs font-medium text-slate-400">
                         Rp
                       </span>
                       <input
-                        type="number"
-                        min={0}
-                        step="any"
-                        value={baseItemPrice}
-                        onChange={(e) => {
-                          setBaseItemPrice(Number(e.target.value));
-                        }}
+                        type="text"
+                        disabled
+                        readOnly
+                        value={
+                          Number(baseItemPrice || 0).toLocaleString("id-ID")
+                        }
                         placeholder="0"
-                        className="w-full bg-transparent px-2 py-2 text-sm font-semibold text-slate-900 focus:outline-none"
+                        className="w-full cursor-not-allowed bg-transparent px-2 py-2 text-sm font-semibold text-slate-600 focus:outline-none"
                       />
                     </div>
                   </div>
