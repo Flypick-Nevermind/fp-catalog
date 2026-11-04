@@ -427,6 +427,7 @@ export function buildProductCatalogWorksheets(
 
   const columns: { header: string; width: number }[] = [
     { header: "Link Produk", width: 38 },
+    { header: "Slug URL", width: 30 },
     { header: "Nama Produk *", width: 38 },
     { header: "Kategori", width: 18 },
     { header: "Status (published/draft)", width: 22 },
@@ -446,6 +447,7 @@ export function buildProductCatalogWorksheets(
     const sampleCategory = categories[0]?.name || "Bag";
     rows.push([
       { value: "https://item.taobao.com/item.htm?id=...", style: "muted" },
+      { value: "", style: "muted" }, // Kosongkan slug untuk produk baru
       { value: "CONTOH: Songmont Small Yore Hobo Bag", style: "data" },
       { value: sampleCategory, style: "data" },
       { value: "draft", style: "data" },
@@ -470,6 +472,7 @@ export function buildProductCatalogWorksheets(
 
       rows.push([
         { value: calcMeta.sourceUrl || "", style: "muted" },
+        { value: product.slug, style: "muted" },
         { value: product.name, style: "data" },
         { value: product.categories?.name || "", style: "data" },
         { value: product.status, style: "data" },
@@ -524,6 +527,15 @@ export function buildProductCatalogWorksheets(
         {
           value:
             "Link sumber barang / toko supplier (misal: Taobao / Tmall / Website Brand) khusus untuk catatan internal admin.",
+          style: "data",
+        },
+      ],
+      [
+        { value: "Slug URL", style: "data" },
+        { value: "Otomatis / Unik", style: "muted" },
+        {
+          value:
+            "Identitas unik produk (huruf kecil & tanda minus). Jangan ubah slug jika ingin meng-update produk lama. Kosongkan jika ingin menambah produk baru (slug otomatis dibuat dari Nama Produk).",
           style: "data",
         },
       ],
