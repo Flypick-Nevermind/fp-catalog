@@ -862,3 +862,173 @@ export async function bulkUpdateKursAction(
     };
   }
 }
+
+/**
+ * Mengubah status banyak produk sekaligus (Published / Draft).
+ */
+export async function bulkUpdateProductStatusAction(
+  productIds: string[],
+  newStatus: "published" | "draft"
+): Promise<ActionResponse<{ updatedCount: number }>> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak: Sesi admin tidak valid." };
+    }
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return { success: false, error: "Pilih minimal 1 produk." };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    const { error } = await supabase
+      .from("products")
+      .update({ status: newStatus })
+      .in("id", productIds);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+
+    return {
+      success: true,
+      data: { updatedCount: productIds.length },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Gagal mengubah status produk secara massal.",
+    };
+  }
+}
+
+/**
+ * Memindahkan kategori banyak produk sekaligus.
+ */
+export async function bulkUpdateProductCategoryAction(
+  productIds: string[],
+  categoryId: string | null
+): Promise<ActionResponse<{ updatedCount: number }>> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak: Sesi admin tidak valid." };
+    }
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return { success: false, error: "Pilih minimal 1 produk." };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    const { error } = await supabase
+      .from("products")
+      .update({ category_id: categoryId || null })
+      .in("id", productIds);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+
+    return {
+      success: true,
+      data: { updatedCount: productIds.length },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Gagal memindahkan kategori produk secara massal.",
+    };
+  }
+}
+
+/**
+ * Menghapus banyak produk sekaligus beserta pembersihan file foto di Supabase Storage.
+ */
+export async function bulkDeleteProductsAction(
+  productIds: string[]
+): Promise<ActionResponse<{ deletedCount: number }>> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak: Sesi admin tidak valid." };
+    }
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return { success: false, error: "Pilih minimal 1 produk." };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    // 1. Ambil daftar URL gambar dari produk yang akan dihapus
+    const { data: images } = await supabase
+      .from("product_images")
+      .select("image_url")
+      .in("product_id", productIds);
+
+    // 2. Hapus produk dari tabel products (otomatis menghapus product_images via CASCADE)
+    const { error: deleteError } = await supabase
+      .from("products")
+      .delete()
+      .in("id", productIds);
+
+    if (deleteError) {
+      throw new Error(deleteError.message);
+    }
+
+    // 3. Bersihkan objek gambar di bucket product-media yang tidak dipakai produk lain
+    if (images && images.length > 0) {
+      const uniqueUrls = Array.from(new Set(images.map((i) => i.image_url)));
+      const { data: stillUsed } = await supabase
+        .from("product_images")
+        .select("image_url")
+        .in("image_url", uniqueUrls);
+
+      const usedSet = new Set((stillUsed || []).map((u) => u.image_url));
+
+      const storagePaths = uniqueUrls
+        .filter((url) => !usedSet.has(url))
+        .map((url) => {
+          const marker = "/storage/v1/object/public/product-media/";
+          const idx = url.indexOf(marker);
+          return idx !== -1
+            ? decodeURIComponent(url.slice(idx + marker.length))
+            : null;
+        })
+        .filter((p): p is string => Boolean(p));
+
+      if (storagePaths.length > 0) {
+        await supabase.storage.from("product-media").remove(storagePaths);
+      }
+    }
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+
+    return {
+      success: true,
+      data: { deletedCount: productIds.length },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Gagal menghapus produk secara massal.",
+    };
+  }
+}

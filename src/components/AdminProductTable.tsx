@@ -18,12 +18,17 @@ import {
   CheckCircle2,
   FileEdit,
   Plus,
+  FolderInput,
+  CheckSquare,
 } from "lucide-react";
 import { Category, Product } from "@/types/database";
 import {
   deleteProductAction,
   toggleProductStatusAction,
   duplicateProductAction,
+  bulkUpdateProductStatusAction,
+  bulkUpdateProductCategoryAction,
+  bulkDeleteProductsAction,
 } from "@/app/actions/product";
 import AdminCategoryManager from "@/components/AdminCategoryManager";
 import AdminBulkKursModal from "@/components/AdminBulkKursModal";
@@ -59,6 +64,13 @@ export default function AdminProductTable({
   // State Loading untuk Quick Toggle Status & Duplicate per Produk
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+
+  // State Bulk Actions (Centang Banyak Produk Sekaligus)
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkCategoryId, setBulkCategoryId] = useState<string>("");
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
   // State Filter Status, Pencarian & Pagination (diinisialisasi dari sessionStorage agar tidak reset ke page 1)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
@@ -294,7 +306,131 @@ export default function AdminProductTable({
       return;
     }
 
+    setSelectedIds((prev) => prev.filter((id) => id !== confirmDeleteProduct.id));
     setConfirmDeleteProduct(null);
+    router.refresh();
+  };
+
+  // Bersihkan ID yang sudah tidak ada di daftar produk terbaru
+  useEffect(() => {
+    const validSet = new Set(products.map((p) => p.id));
+    setSelectedIds((prev) => {
+      const next = prev.filter((id) => validSet.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [products]);
+
+  const currentPageIds = useMemo(
+    () => paginatedProducts.map((p) => p.id),
+    [paginatedProducts]
+  );
+
+  const isAllCurrentPageSelected =
+    currentPageIds.length > 0 &&
+    currentPageIds.every((id) => selectedIds.includes(id));
+
+  const isSomeCurrentPageSelected =
+    currentPageIds.some((id) => selectedIds.includes(id)) &&
+    !isAllCurrentPageSelected;
+
+  const handleToggleSelectRow = (productId: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(productId)
+        ? prev.filter((id) => id !== productId)
+        : [...prev, productId]
+    );
+  };
+
+  const handleToggleSelectCurrentPage = () => {
+    if (isAllCurrentPageSelected) {
+      setSelectedIds((prev) =>
+        prev.filter((id) => !currentPageIds.includes(id))
+      );
+    } else {
+      setSelectedIds((prev) => {
+        const merged = new Set([...prev, ...currentPageIds]);
+        return Array.from(merged);
+      });
+    }
+  };
+
+  const handleSelectAllFiltered = () => {
+    const allFilteredIds = filteredProducts.map((p) => p.id);
+    setSelectedIds(allFilteredIds);
+  };
+
+  const showNotice = (msg: string) => {
+    setBulkNotice(msg);
+    setTimeout(() => {
+      setBulkNotice((curr) => (curr === msg ? null : curr));
+    }, 4500);
+  };
+
+  const handleBulkStatusChange = async (newStatus: "published" | "draft") => {
+    if (selectedIds.length === 0 || isBulkProcessing) return;
+    setIsBulkProcessing(true);
+    const res = await bulkUpdateProductStatusAction(selectedIds, newStatus);
+    setIsBulkProcessing(false);
+
+    if (!res.success) {
+      alert(res.error || "Gagal mengubah status produk secara massal.");
+      return;
+    }
+
+    showNotice(
+      `Berhasil mengubah ${res.data?.updatedCount || selectedIds.length} produk menjadi ${
+        newStatus === "published" ? "Published" : "Draft"
+      }.`
+    );
+    setSelectedIds([]);
+    router.refresh();
+  };
+
+  const handleBulkMoveCategory = async () => {
+    if (selectedIds.length === 0 || !bulkCategoryId || isBulkProcessing) return;
+    const targetCategoryId =
+      bulkCategoryId === "__NONE__" ? null : bulkCategoryId;
+    const categoryName =
+      bulkCategoryId === "__NONE__"
+        ? "Tanpa Kategori"
+        : categories.find((c) => c.id === bulkCategoryId)?.name || "Kategori baru";
+
+    setIsBulkProcessing(true);
+    const res = await bulkUpdateProductCategoryAction(
+      selectedIds,
+      targetCategoryId
+    );
+    setIsBulkProcessing(false);
+
+    if (!res.success) {
+      alert(res.error || "Gagal memindahkan kategori produk secara massal.");
+      return;
+    }
+
+    showNotice(
+      `Berhasil memindahkan ${res.data?.updatedCount || selectedIds.length} produk ke "${categoryName}".`
+    );
+    setBulkCategoryId("");
+    setSelectedIds([]);
+    router.refresh();
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    if (selectedIds.length === 0 || isBulkProcessing) return;
+    setIsBulkProcessing(true);
+    const res = await bulkDeleteProductsAction(selectedIds);
+    setIsBulkProcessing(false);
+
+    if (!res.success) {
+      alert(res.error || "Gagal menghapus produk secara massal.");
+      return;
+    }
+
+    showNotice(
+      `Berhasil menghapus ${res.data?.deletedCount || selectedIds.length} produk secara permanen.`
+    );
+    setShowBulkDeleteConfirm(false);
+    setSelectedIds([]);
     router.refresh();
   };
 
@@ -480,6 +616,125 @@ export default function AdminProductTable({
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {/* Notifikasi Sukses Bulk Action */}
+          {bulkNotice && (
+            <div className="flex items-center justify-between gap-3 border-b border-emerald-200 bg-emerald-50/90 px-6 py-3 text-xs font-medium text-emerald-900">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span>{bulkNotice}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkNotice(null)}
+                className="rounded-lg p-1 text-emerald-700 hover:bg-emerald-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Toolbar Bulk Actions (Muncul saat ada produk yang dicentang) */}
+          {selectedIds.length > 0 && (
+            <div className="flex flex-col gap-3 border-b border-sky-200 bg-sky-50/90 px-6 py-3.5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-2.5 py-1 text-xs font-bold text-white shadow-2xs">
+                  <CheckSquare className="h-3.5 w-3.5" />
+                  {selectedIds.length} produk dipilih
+                </span>
+
+                {selectedIds.length < filteredProducts.length && (
+                  <button
+                    type="button"
+                    disabled={isBulkProcessing}
+                    onClick={handleSelectAllFiltered}
+                    className="rounded-lg border border-sky-300 bg-white px-2.5 py-1 text-xs font-semibold text-sky-800 transition hover:bg-sky-100 disabled:opacity-50"
+                  >
+                    Pilih Semua ({filteredProducts.length})
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  disabled={isBulkProcessing}
+                  onClick={() => setSelectedIds([])}
+                  className="rounded-lg px-2 py-1 text-xs font-medium text-slate-600 underline decoration-slate-400 underline-offset-2 hover:text-slate-900 disabled:opacity-50"
+                >
+                  Batal Pilih
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Bulk Publish */}
+                <button
+                  type="button"
+                  disabled={isBulkProcessing}
+                  onClick={() => handleBulkStatusChange("published")}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs transition hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {isBulkProcessing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  Jadikan Published
+                </button>
+
+                {/* Bulk Draft */}
+                <button
+                  type="button"
+                  disabled={isBulkProcessing}
+                  onClick={() => handleBulkStatusChange("draft")}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs transition hover:bg-amber-600 disabled:opacity-50"
+                >
+                  {isBulkProcessing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <FileEdit className="h-3.5 w-3.5" />
+                  )}
+                  Jadikan Draft
+                </button>
+
+                {/* Bulk Move Category */}
+                <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white p-1">
+                  <FolderInput className="ml-1.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <select
+                    value={bulkCategoryId}
+                    disabled={isBulkProcessing}
+                    onChange={(e) => setBulkCategoryId(e.target.value)}
+                    className="bg-transparent py-0.5 pr-2 text-xs font-medium text-slate-800 focus:outline-none"
+                  >
+                    <option value="">Pindah ke Kategori...</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                    <option value="__NONE__">— Tanpa Kategori —</option>
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!bulkCategoryId || isBulkProcessing}
+                    onClick={handleBulkMoveCategory}
+                    className="rounded-lg bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Pindahkan
+                  </button>
+                </div>
+
+                {/* Bulk Delete */}
+                <button
+                  type="button"
+                  disabled={isBulkProcessing}
+                  onClick={() => setShowBulkDeleteConfirm(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs transition hover:bg-red-700 disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Hapus ({selectedIds.length})
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Toolbar Atas Tabel: Pencarian Cepat & Pilihan Jumlah Baris */}
           <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative w-full sm:max-w-xs">
@@ -530,7 +785,19 @@ export default function AdminProductTable({
             <table className="w-full text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 <tr>
-                  <th className="w-14 px-6 py-4 text-center">No</th>
+                  <th className="w-12 pl-6 pr-2 py-4 text-center">
+                    <input
+                      type="checkbox"
+                      checked={isAllCurrentPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = isSomeCurrentPageSelected;
+                      }}
+                      onChange={handleToggleSelectCurrentPage}
+                      title="Pilih semua produk di halaman ini"
+                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                    />
+                  </th>
+                  <th className="w-12 px-3 py-4 text-center">No</th>
                   <th className="px-6 py-4">Produk</th>
                   <th className="px-6 py-4">Kategori</th>
                   <th className="px-6 py-4">Harga</th>
@@ -542,7 +809,7 @@ export default function AdminProductTable({
                 {paginatedProducts.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-6 py-10 text-center text-xs text-slate-400"
                     >
                       Tidak ada produk{" "}
@@ -563,19 +830,31 @@ export default function AdminProductTable({
                     const isToggling = togglingId === product.id;
                     const isDuplicating = duplicatingId === product.id;
                     const isHighlighted = highlightedProductId === product.id;
+                    const isSelected = selectedIds.includes(product.id);
                     const calcMeta = extractJastipCalcMeta(product);
 
                     return (
                       <tr
                         key={product.id}
                         className={cn(
-                          "transition-colors duration-500",
-                          isHighlighted
+                          "transition-colors duration-300",
+                          isSelected
+                            ? "bg-sky-50/70"
+                            : isHighlighted
                             ? "bg-sky-50/90 ring-1 ring-inset ring-sky-300"
                             : "hover:bg-slate-50/70"
                         )}
                       >
-                        <td className="px-6 py-4 text-center text-xs font-semibold text-slate-500">
+                        <td className="pl-6 pr-2 py-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleToggleSelectRow(product.id)}
+                            aria-label={`Pilih ${product.name}`}
+                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                          />
+                        </td>
+                        <td className="px-3 py-4 text-center text-xs font-semibold text-slate-500">
                           {rowNumber}
                         </td>
 
@@ -858,6 +1137,58 @@ export default function AdminProductTable({
                   </>
                 ) : (
                   "Ya, Hapus Permanen"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Hapus Massal (Bulk Delete) */}
+      {showBulkDeleteConfirm && selectedIds.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  Hapus {selectedIds.length} Produk Sekaligus?
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Apakah Anda yakin ingin menghapus{" "}
+                  <span className="font-bold text-slate-900">
+                    {selectedIds.length} produk yang dipilih
+                  </span>{" "}
+                  secara permanen? Seluruh foto produk terkait di Supabase
+                  Storage juga akan dihapus.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={isBulkProcessing}
+                onClick={() => setShowBulkDeleteConfirm(false)}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={isBulkProcessing}
+                onClick={handleConfirmBulkDelete}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {isBulkProcessing ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Menghapus {selectedIds.length} Produk...
+                  </>
+                ) : (
+                  `Ya, Hapus ${selectedIds.length} Produk`
                 )}
               </button>
             </div>
