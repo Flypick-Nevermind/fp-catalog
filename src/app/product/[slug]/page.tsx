@@ -15,6 +15,7 @@ import ProductGallery from "@/components/ProductGallery";
 import WhatsAppButton from "@/components/WhatsAppButton";
 import ShareProductButton from "@/components/ShareProductButton";
 import { Product, ProductAttribute } from "@/types/database";
+import { getPublicAttributes } from "@/lib/jastip-calc";
 import { formatIDR } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -181,9 +182,9 @@ export default async function ProductDetailPage({
   const relatedProducts = await getRelatedProducts(product);
 
   const storeName = process.env.NEXT_PUBLIC_STORE_NAME || "FP Catalog";
-  const attributes: ProductAttribute[] = Array.isArray(product.attributes)
-    ? product.attributes
-    : [];
+  const attributes: ProductAttribute[] = getPublicAttributes(
+    product.attributes
+  );
 
   // Format deskripsi menjadi paragraf yang rapi
   const descriptionParagraphs = (product.description || "")

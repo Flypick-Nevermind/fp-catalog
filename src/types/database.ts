@@ -27,6 +27,11 @@ export interface Product {
   slug: string;
   description: string;
   price: number;
+  actual_weight_grams?: number | null;
+  weight_grams?: number | null;
+  yuan_price?: number | null;
+  yuan_multiplier?: number | null;
+  rate_per_kg?: number | null;
   category_id: string | null;
   attributes: ProductAttribute[];
   status: ProductStatus;

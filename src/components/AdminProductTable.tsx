@@ -26,6 +26,8 @@ import {
   duplicateProductAction,
 } from "@/app/actions/product";
 import AdminCategoryManager from "@/components/AdminCategoryManager";
+import AdminBulkKursModal from "@/components/AdminBulkKursModal";
+import { extractJastipCalcMeta } from "@/lib/jastip-calc";
 import { formatIDR, cn } from "@/lib/utils";
 
 type StatusFilter = "all" | "published" | "draft";
@@ -442,6 +444,7 @@ export default function AdminProductTable({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <AdminBulkKursModal products={products} categories={categories} />
           <AdminCategoryManager categories={categories} products={products} />
           <Link
             href="/admin/products/new"
@@ -560,6 +563,7 @@ export default function AdminProductTable({
                     const isToggling = togglingId === product.id;
                     const isDuplicating = duplicatingId === product.id;
                     const isHighlighted = highlightedProductId === product.id;
+                    const calcMeta = extractJastipCalcMeta(product);
 
                     return (
                       <tr
@@ -610,8 +614,26 @@ export default function AdminProductTable({
                           )}
                         </td>
 
-                        <td className="px-6 py-4 font-medium text-slate-900">
-                          {formatIDR(Number(product.price))}
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="font-semibold text-slate-900">
+                            {formatIDR(Number(product.price))}
+                          </div>
+                          {calcMeta.yuanPrice > 0 && (
+                            <div className="mt-0.5 text-[11px] font-medium text-sky-700">
+                              &yen;{calcMeta.yuanPrice.toLocaleString("id-ID")}{" "}
+                              &bull; {calcMeta.weightGrams}gr{" "}
+                              <span className="text-slate-400">
+                                (&times;
+                                {calcMeta.yuanMultiplier.toLocaleString("id-ID")}
+                                )
+                              </span>
+                            </div>
+                          )}
+                          {calcMeta.actualWeightGrams > 0 && (
+                            <div className="text-[10px] text-slate-400">
+                              Berat Riil: {calcMeta.actualWeightGrams}gr
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-6 py-4">

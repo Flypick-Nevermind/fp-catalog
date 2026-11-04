@@ -26,12 +26,16 @@ import {
   getLatestProductAndCategoriesAction,
 } from "@/app/actions/product";
 import { Category, Product } from "@/types/database";
+import {
+  DEFAULT_RATE_PER_KG,
+  DEFAULT_PROXY_COST_PER_KG,
+  DEFAULT_YUAN_MULTIPLIER,
+  MIN_CHARGEABLE_KG,
+  getPublicAttributes,
+  extractJastipCalcMeta,
+  extractSpecWeightGrams,
+} from "@/lib/jastip-calc";
 import { formatIDR, slugify } from "@/lib/utils";
-
-const DEFAULT_RATE_PER_KG = 220000; // Rp 220.000 / kg sesuai aturan Jastip
-const DEFAULT_PROXY_COST_PER_KG = 200000; // Rp 200.000 / kg biaya proxy
-const DEFAULT_YUAN_MULTIPLIER = 2800; // Faktor pengali kurs Yuan (Rp 2.800 / ¥)
-const MIN_CHARGEABLE_KG = 0.2; // Minimum 200 gram (0,2 kg)
 
 const formSchema = z.object({
   name: z.string().min(2, "Nama produk minimal 2 karakter"),
@@ -64,28 +68,6 @@ interface ProductFormProps {
   categories: Category[];
 }
 
-/**
- * Mengekstrak angka gram dari atribut "Weight" / "Berat" jika sedang mode Edit Produk
- */
-function extractInitialWeightGrams(product?: Product | null): number {
-  if (!product?.attributes) return 200;
-  const weightAttr = product.attributes.find((a) => {
-    const k = a.key.toLowerCase();
-    return k.includes("weight") || k.includes("berat");
-  });
-  if (!weightAttr) return 200;
-
-  const val = weightAttr.value.toLowerCase();
-  const numMatch = val.match(/(\d+([.,]\d+)?)/);
-  if (!numMatch) return 200;
-
-  const parsed = parseFloat(numMatch[1].replace(",", "."));
-  if (val.includes("kg") && !val.includes("gr")) {
-    return Math.round(parsed * 1000);
-  }
-  return Math.round(parsed);
-}
-
 function mapProductToFormValues(product: Product): ProductFormValues {
   const sortedImages =
     product.product_images
@@ -97,10 +79,9 @@ function mapProductToFormValues(product: Product): ProductFormValues {
         order_index: idx,
       })) || [];
 
+  const publicAttrs = getPublicAttributes(product.attributes);
   const attrs =
-    product.attributes && product.attributes.length > 0
-      ? product.attributes
-      : [{ key: "Weight", value: "" }];
+    publicAttrs.length > 0 ? publicAttrs : [{ key: "Weight", value: "" }];
 
   return {
     name: product.name || "",
@@ -127,17 +108,31 @@ export default function ProductForm({
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
 
+  const initialCalcMeta = extractJastipCalcMeta(initialData);
+
   // State Kalkulator Otomatis Jastip (Berat, Kurs Yuan & Harga)
-  const [useAutoCalc, setUseAutoCalc] = useState<boolean>(!initialData);
-  const [weightGrams, setWeightGrams] = useState<number>(() =>
-    extractInitialWeightGrams(initialData)
+  const [useAutoCalc, setUseAutoCalc] = useState<boolean>(() =>
+    initialData
+      ? initialCalcMeta.yuanPrice > 0
+        ? initialCalcMeta.useAutoCalc
+        : false
+      : true
   );
-  const [ratePerKg, setRatePerKg] = useState<number>(DEFAULT_RATE_PER_KG);
-  const [yuanPrice, setYuanPrice] = useState<number>(0);
+  const [weightGrams, setWeightGrams] = useState<number>(
+    () => initialCalcMeta.weightGrams
+  );
+  const [ratePerKg, setRatePerKg] = useState<number>(
+    () => initialCalcMeta.ratePerKg
+  );
+  const [yuanPrice, setYuanPrice] = useState<number>(
+    () => initialCalcMeta.yuanPrice
+  );
   const [yuanMultiplier, setYuanMultiplier] = useState<number>(
-    DEFAULT_YUAN_MULTIPLIER
+    () => initialCalcMeta.yuanMultiplier
   );
-  const [baseItemPrice, setBaseItemPrice] = useState<number>(0);
+  const [baseItemPrice, setBaseItemPrice] = useState<number>(() =>
+    Math.round(initialCalcMeta.yuanPrice * initialCalcMeta.yuanMultiplier)
+  );
 
   const defaultValues: ProductFormValues = initialData
     ? mapProductToFormValues(initialData)
@@ -145,7 +140,7 @@ export default function ProductForm({
         name: "",
         slug: "",
         category_id: "",
-        price: 44000,
+        price: 220000,
         status: "published",
         description: "",
         attributes: [{ key: "Weight", value: "" }],
@@ -153,7 +148,7 @@ export default function ProductForm({
       };
 
   const lastSnapshotRef = useRef<string>(
-    initialData ? JSON.stringify(mapProductToFormValues(initialData)) : ""
+    initialData ? JSON.stringify(initialData) : ""
   );
 
   const {
@@ -163,7 +158,6 @@ export default function ProductForm({
     setValue,
     reset,
     watch,
-    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ProductFormValues>({
     resolver: zodResolver(formSchema),
@@ -193,18 +187,30 @@ export default function ProductForm({
         // 2. Jika sedang di halaman Edit Produk, cek apakah ada perubahan terbaru di DB
         if (initialData?.id && res.data.product) {
           const freshFormValues = mapProductToFormValues(res.data.product);
-          const freshSnapshot = JSON.stringify(freshFormValues);
+          const freshSnapshot = JSON.stringify(res.data.product);
 
           if (forceOverwrite || freshSnapshot !== lastSnapshotRef.current) {
             lastSnapshotRef.current = freshSnapshot;
             reset(freshFormValues, {
               keepDirtyValues: !forceOverwrite,
             });
-            setWeightGrams(extractInitialWeightGrams(res.data.product));
-            setSyncNotice(
-              "Data telah disinkronkan dengan perubahan terbaru dari database."
+            const freshMeta = extractJastipCalcMeta(res.data.product);
+            setUseAutoCalc(
+              freshMeta.yuanPrice > 0 ? freshMeta.useAutoCalc : false
             );
-            setTimeout(() => setSyncNotice(null), 4000);
+            setWeightGrams(freshMeta.weightGrams);
+            setRatePerKg(freshMeta.ratePerKg);
+            setYuanPrice(freshMeta.yuanPrice);
+            setYuanMultiplier(freshMeta.yuanMultiplier);
+            setBaseItemPrice(
+              Math.round(freshMeta.yuanPrice * freshMeta.yuanMultiplier)
+            );
+            if (!forceOverwrite) {
+              setSyncNotice(
+                "Data telah disinkronkan dengan perubahan terbaru dari database."
+              );
+              setTimeout(() => setSyncNotice(null), 4000);
+            }
           }
         }
       } finally {
@@ -263,6 +269,8 @@ export default function ProductForm({
   }, [useAutoCalc, calculatedTotalPrice, setValue]);
 
   const watchedName = watch("name");
+  const watchedAttributes = watch("attributes");
+  const liveActualWeightGrams = extractSpecWeightGrams(watchedAttributes);
 
   const handleAutoSlug = () => {
     if (watchedName) {
@@ -293,9 +301,18 @@ export default function ProductForm({
   const onSubmit = async (values: ProductFormValues) => {
     setServerError(null);
 
+    const actualWeightGrams = extractSpecWeightGrams(values.attributes);
+
     const response = await saveProductAction({
       id: initialData?.id,
       ...values,
+      actual_weight_grams: actualWeightGrams,
+      weight_grams: weightGrams,
+      yuan_price: yuanPrice,
+      yuan_multiplier: yuanMultiplier,
+      rate_per_kg: ratePerKg,
+      use_auto_calc: useAutoCalc,
+      attributes: getPublicAttributes(values.attributes),
       category_id: values.category_id || null,
     });
 
@@ -561,11 +578,11 @@ export default function ProductForm({
 
             {useAutoCalc && (
               <div className="space-y-4 pt-1">
-                {/* 1. Input Berat Barang (Gram) */}
+                {/* 1. Input Berat Tagihan Jastip (Gram) — Default 1000g (1 kg) */}
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <label className="text-xs font-semibold text-slate-700">
-                      Berat Barang (Gram)
+                      Berat Tagihan (Gram)
                     </label>
                     <span className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-700">
                       <Scale className="h-3 w-3" />
@@ -583,7 +600,7 @@ export default function ProductForm({
                       step="any"
                       value={weightGrams}
                       onChange={(e) => setWeightGrams(Number(e.target.value))}
-                      placeholder="Contoh: 500"
+                      placeholder="Contoh: 1000"
                       className="w-full bg-transparent py-2 text-sm font-semibold text-slate-900 focus:outline-none"
                     />
                     <span className="text-xs font-medium text-slate-400">
@@ -614,6 +631,21 @@ export default function ProductForm({
                       </button>
                     ))}
                   </div>
+
+                  <p className="mt-1.5 text-[11px] text-slate-500">
+                    Berat Riil (Spesifikasi{" "}
+                    <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
+                      Weight
+                    </code>
+                    ):{" "}
+                    <strong className="text-slate-700">
+                      {liveActualWeightGrams > 0
+                        ? `${liveActualWeightGrams.toLocaleString("id-ID")} gr`
+                        : "Belum diisi"}
+                    </strong>{" "}
+                    &bull; Default tagihan tas:{" "}
+                    <strong className="text-sky-700">1.000 gr (1 kg)</strong>
+                  </p>
                 </div>
 
                 {/* 2. Input Harga Yuan (¥) & Faktor Pengali Kurs (Default 2800) */}

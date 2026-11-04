@@ -6,6 +6,16 @@ import { createSupabaseAdmin } from "@/lib/supabase";
 import { verifyAdminSession } from "@/app/actions/auth";
 import { slugify } from "@/lib/utils";
 import { Category, Product } from "@/types/database";
+import {
+  DEFAULT_CALC_WEIGHT_GRAMS,
+  DEFAULT_RATE_PER_KG,
+  DEFAULT_YUAN_MULTIPLIER,
+  extractJastipCalcMeta,
+  extractSpecWeightGrams,
+  computeJastipFinalPrice,
+  attachJastipCalcMeta,
+  getPublicAttributes,
+} from "@/lib/jastip-calc";
 
 const productSchema = z.object({
   id: z.string().uuid().optional(),
@@ -13,6 +23,12 @@ const productSchema = z.object({
   slug: z.string().min(2, "Slug produk wajib diisi"),
   description: z.string().optional().default(""),
   price: z.coerce.number().min(0, "Harga tidak boleh negatif"),
+  actual_weight_grams: z.coerce.number().min(0).optional(),
+  weight_grams: z.coerce.number().min(0).optional(),
+  yuan_price: z.coerce.number().min(0).optional(),
+  yuan_multiplier: z.coerce.number().min(0).optional(),
+  rate_per_kg: z.coerce.number().min(0).optional(),
+  use_auto_calc: z.boolean().optional(),
   category_id: z.string().nullable().optional(),
   status: z.enum(["published", "draft"]),
   attributes: z
@@ -124,6 +140,35 @@ export async function saveProductAction(
     const normalizedSlug = slugify(data.slug || data.name);
     const supabase = createSupabaseAdmin();
 
+    const cleanAttributes = getPublicAttributes(data.attributes);
+    const actualWeightGrams =
+      typeof data.actual_weight_grams === "number" &&
+      data.actual_weight_grams > 0
+        ? Math.round(data.actual_weight_grams)
+        : extractSpecWeightGrams(cleanAttributes);
+    const calcWeightGrams =
+      typeof data.weight_grams === "number" && data.weight_grams > 0
+        ? Math.round(data.weight_grams)
+        : DEFAULT_CALC_WEIGHT_GRAMS;
+    const yuanPrice = Number(data.yuan_price) || 0;
+    const yuanMultiplier =
+      Number(data.yuan_multiplier) > 0
+        ? Number(data.yuan_multiplier)
+        : DEFAULT_YUAN_MULTIPLIER;
+    const ratePerKg =
+      Number(data.rate_per_kg) > 0
+        ? Number(data.rate_per_kg)
+        : DEFAULT_RATE_PER_KG;
+
+    const fallbackAttributesWithMeta = attachJastipCalcMeta(cleanAttributes, {
+      useAutoCalc: data.use_auto_calc ?? true,
+      actualWeightGrams,
+      weightGrams: calcWeightGrams,
+      yuanPrice,
+      yuanMultiplier,
+      ratePerKg,
+    });
+
     // Pastikan tepat satu gambar ditandai is_primary
     const hasPrimary = data.images.some((img) => img.is_primary);
     const normalizedImages = data.images.map((img, idx) => ({
@@ -135,19 +180,46 @@ export async function saveProductAction(
     let productId = data.id;
 
     if (productId) {
-      // UPDATE EXISTING PRODUCT
-      const { error: updateError } = await supabase
+      // UPDATE EXISTING PRODUCT (Utamakan kolom khusus di tabel products)
+      let { error: updateError } = await supabase
         .from("products")
         .update({
           name: data.name,
           slug: normalizedSlug,
           description: data.description,
           price: data.price,
+          actual_weight_grams: actualWeightGrams,
+          weight_grams: calcWeightGrams,
+          yuan_price: yuanPrice,
+          yuan_multiplier: yuanMultiplier,
+          rate_per_kg: ratePerKg,
           category_id: data.category_id || null,
-          attributes: data.attributes,
+          attributes: cleanAttributes,
           status: data.status,
         })
         .eq("id", productId);
+
+      // Fallback otomatis jika migrasi SQL belum dijalankan di Supabase
+      if (
+        updateError &&
+        (updateError.code === "PGRST204" ||
+          updateError.code === "42703" ||
+          updateError.message.includes("column"))
+      ) {
+        const retry = await supabase
+          .from("products")
+          .update({
+            name: data.name,
+            slug: normalizedSlug,
+            description: data.description,
+            price: data.price,
+            category_id: data.category_id || null,
+            attributes: fallbackAttributesWithMeta,
+            status: data.status,
+          })
+          .eq("id", productId);
+        updateError = retry.error;
+      }
 
       if (updateError) {
         if (updateError.code === "23505") {
@@ -184,20 +256,49 @@ export async function saveProductAction(
         throw new Error(`Gagal menyimpan foto produk: ${insertImagesError.message}`);
       }
     } else {
-      // INSERT NEW PRODUCT
-      const { data: insertedProduct, error: insertError } = await supabase
+      // INSERT NEW PRODUCT (Utamakan kolom khusus di tabel products)
+      let { data: insertedProduct, error: insertError } = await supabase
         .from("products")
         .insert({
           name: data.name,
           slug: normalizedSlug,
           description: data.description,
           price: data.price,
+          actual_weight_grams: actualWeightGrams,
+          weight_grams: calcWeightGrams,
+          yuan_price: yuanPrice,
+          yuan_multiplier: yuanMultiplier,
+          rate_per_kg: ratePerKg,
           category_id: data.category_id || null,
-          attributes: data.attributes,
+          attributes: cleanAttributes,
           status: data.status,
         })
         .select("id, slug")
         .single();
+
+      // Fallback otomatis jika migrasi SQL belum dijalankan di Supabase
+      if (
+        insertError &&
+        (insertError.code === "PGRST204" ||
+          insertError.code === "42703" ||
+          insertError.message.includes("column"))
+      ) {
+        const retry = await supabase
+          .from("products")
+          .insert({
+            name: data.name,
+            slug: normalizedSlug,
+            description: data.description,
+            price: data.price,
+            category_id: data.category_id || null,
+            attributes: fallbackAttributesWithMeta,
+            status: data.status,
+          })
+          .select("id, slug")
+          .single();
+        insertedProduct = retry.data;
+        insertError = retry.error;
+      }
 
       if (insertError || !insertedProduct) {
         if (insertError?.code === "23505") {
@@ -393,21 +494,53 @@ export async function duplicateProductAction(
     const shortCode = Math.random().toString(36).substring(2, 6);
     const clonedName = `${sourceProduct.name} (Copy)`;
     const clonedSlug = `${slugify(sourceProduct.slug)}-copy-${shortCode}`;
+    const sourceMeta = extractJastipCalcMeta(
+      sourceProduct as unknown as Product
+    );
+    const cleanSourceAttrs = getPublicAttributes(sourceProduct.attributes);
 
     // 2. Insert produk baru dengan status 'draft' agar admin dapat mengecek dulu
-    const { data: newProduct, error: insertErr } = await supabase
+    let { data: newProduct, error: insertErr } = await supabase
       .from("products")
       .insert({
         name: clonedName,
         slug: clonedSlug,
         description: sourceProduct.description || "",
         price: sourceProduct.price,
+        actual_weight_grams: sourceMeta.actualWeightGrams,
+        weight_grams: sourceMeta.weightGrams,
+        yuan_price: sourceMeta.yuanPrice,
+        yuan_multiplier: sourceMeta.yuanMultiplier,
+        rate_per_kg: sourceMeta.ratePerKg,
         category_id: sourceProduct.category_id,
-        attributes: sourceProduct.attributes || [],
+        attributes: cleanSourceAttrs,
         status: "draft",
       })
       .select("id, name")
       .single();
+
+    if (
+      insertErr &&
+      (insertErr.code === "PGRST204" ||
+        insertErr.code === "42703" ||
+        insertErr.message.includes("column"))
+    ) {
+      const retry = await supabase
+        .from("products")
+        .insert({
+          name: clonedName,
+          slug: clonedSlug,
+          description: sourceProduct.description || "",
+          price: sourceProduct.price,
+          category_id: sourceProduct.category_id,
+          attributes: sourceProduct.attributes || [],
+          status: "draft",
+        })
+        .select("id, name")
+        .single();
+      newProduct = retry.data;
+      insertErr = retry.error;
+    }
 
     if (insertErr || !newProduct) {
       throw new Error(insertErr?.message || "Gagal menduplikasi produk.");
@@ -574,6 +707,158 @@ export async function deleteCategoryAction(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Gagal menghapus kategori.",
+    };
+  }
+}
+
+export interface BulkKursUpdatePayload {
+  newYuanMultiplier: number;
+  newRatePerKg?: number | null;
+  newWeightGrams?: number | null;
+  categoryId?: string | null;
+}
+
+/**
+ * Mengubah Pengali Kurs Yuan (dan opsional Tarif Jastip per KG / Berat Tagihan) secara massal
+ * untuk seluruh produk (atau kategori tertentu) yang memiliki data Harga Yuan (¥).
+ */
+export async function bulkUpdateKursAction(
+  payload: BulkKursUpdatePayload
+): Promise<ActionResponse<{ updatedCount: number }>> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak: Sesi admin tidak valid." };
+    }
+
+    const newMultiplier = Number(payload.newYuanMultiplier);
+    if (!Number.isFinite(newMultiplier) || newMultiplier <= 0) {
+      return {
+        success: false,
+        error: "Pengali kurs Yuan harus lebih dari 0.",
+      };
+    }
+
+    const customRatePerKg =
+      payload.newRatePerKg !== undefined &&
+      payload.newRatePerKg !== null &&
+      Number(payload.newRatePerKg) > 0
+        ? Number(payload.newRatePerKg)
+        : null;
+
+    const customWeightGrams =
+      payload.newWeightGrams !== undefined &&
+      payload.newWeightGrams !== null &&
+      Number(payload.newWeightGrams) > 0
+        ? Math.round(Number(payload.newWeightGrams))
+        : null;
+
+    const supabase = createSupabaseAdmin();
+
+    let query = supabase.from("products").select("*");
+
+    if (payload.categoryId && payload.categoryId !== "all") {
+      if (payload.categoryId === "uncategorized") {
+        query = query.is("category_id", null);
+      } else {
+        query = query.eq("category_id", payload.categoryId);
+      }
+    }
+
+    const { data: products, error: fetchError } = await query;
+    if (fetchError) {
+      throw new Error(fetchError.message);
+    }
+
+    if (!products || products.length === 0) {
+      return {
+        success: false,
+        error: "Tidak ada produk yang ditemukan pada filter tersebut.",
+      };
+    }
+
+    let updatedCount = 0;
+
+    // Proses pembaruan secara paralel yang aman
+    await Promise.all(
+      products.map(async (prod) => {
+        const meta = extractJastipCalcMeta(prod as unknown as Product);
+        if (!meta.useAutoCalc || meta.yuanPrice <= 0) {
+          return;
+        }
+
+        const nextRatePerKg = customRatePerKg ?? meta.ratePerKg;
+        const nextWeightGrams = customWeightGrams ?? meta.weightGrams;
+        const { finalPrice } = computeJastipFinalPrice({
+          weightGrams: nextWeightGrams,
+          yuanPrice: meta.yuanPrice,
+          yuanMultiplier: newMultiplier,
+          ratePerKg: nextRatePerKg,
+        });
+
+        const cleanAttrs = getPublicAttributes(prod.attributes);
+        const actualWeightGrams =
+          meta.actualWeightGrams > 0
+            ? meta.actualWeightGrams
+            : extractSpecWeightGrams(cleanAttrs);
+
+        let { error: updateErr } = await supabase
+          .from("products")
+          .update({
+            price: finalPrice,
+            actual_weight_grams: actualWeightGrams,
+            weight_grams: nextWeightGrams,
+            yuan_price: meta.yuanPrice,
+            yuan_multiplier: newMultiplier,
+            rate_per_kg: nextRatePerKg,
+            attributes: cleanAttrs,
+          })
+          .eq("id", prod.id);
+
+        if (
+          updateErr &&
+          (updateErr.code === "PGRST204" ||
+            updateErr.code === "42703" ||
+            updateErr.message.includes("column"))
+        ) {
+          const fallbackAttrs = attachJastipCalcMeta(cleanAttrs, {
+            useAutoCalc: true,
+            actualWeightGrams,
+            weightGrams: nextWeightGrams,
+            yuanPrice: meta.yuanPrice,
+            yuanMultiplier: newMultiplier,
+            ratePerKg: nextRatePerKg,
+          });
+          const retry = await supabase
+            .from("products")
+            .update({
+              price: finalPrice,
+              attributes: fallbackAttrs,
+            })
+            .eq("id", prod.id);
+          updateErr = retry.error;
+        }
+
+        if (!updateErr) {
+          updatedCount += 1;
+        }
+      })
+    );
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+
+    return {
+      success: true,
+      data: { updatedCount },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Gagal memperbarui kurs produk secara massal.",
     };
   }
 }
