@@ -6,6 +6,7 @@
 -- 1. Tambahkan kolom khusus untuk berat riil, berat tagihan (default 1000g / 1kg),
 --    harga Yuan, pengali kurs (default 2800), dan tarif per KG (default 220000)
 ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS source_url TEXT DEFAULT '',
   ADD COLUMN IF NOT EXISTS actual_weight_grams INT NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS weight_grams INT NOT NULL DEFAULT 1000,
   ADD COLUMN IF NOT EXISTS yuan_price NUMERIC(12, 2) NOT NULL DEFAULT 0,

@@ -20,6 +20,7 @@ import {
   Plus,
   FolderInput,
   CheckSquare,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Category, Product } from "@/types/database";
 import {
@@ -32,6 +33,8 @@ import {
 } from "@/app/actions/product";
 import AdminCategoryManager from "@/components/AdminCategoryManager";
 import AdminBulkKursModal from "@/components/AdminBulkKursModal";
+import AdminExcelExportMenu from "@/components/AdminExcelExportMenu";
+import { downloadProductsExcel } from "@/lib/excel";
 import { extractJastipCalcMeta } from "@/lib/jastip-calc";
 import { formatIDR, cn } from "@/lib/utils";
 
@@ -580,6 +583,13 @@ export default function AdminProductTable({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <AdminExcelExportMenu
+            allProducts={products}
+            filteredProducts={filteredProducts}
+            selectedIds={selectedIds}
+            categories={categories}
+            isFiltered={statusFilter !== "all" || Boolean(searchQuery.trim())}
+          />
           <AdminBulkKursModal products={products} categories={categories} />
           <AdminCategoryManager categories={categories} products={products} />
           <Link
@@ -720,6 +730,24 @@ export default function AdminProductTable({
                     Pindahkan
                   </button>
                 </div>
+
+                {/* Bulk Export Excel */}
+                <button
+                  type="button"
+                  disabled={isBulkProcessing}
+                  onClick={() => {
+                    const selected = products.filter((p) =>
+                      selectedIds.includes(p.id)
+                    );
+                    downloadProductsExcel(selected, categories, {
+                      filenamePrefix: `Produk-Terpilih-${selected.length}-Flypick-Catalog`,
+                    });
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 shadow-2xs transition hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                  Export Excel ({selectedIds.length})
+                </button>
 
                 {/* Bulk Delete */}
                 <button

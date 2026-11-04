@@ -26,6 +26,7 @@ export interface Product {
   name: string;
   slug: string;
   description: string;
+  source_url?: string | null;
   price: number;
   actual_weight_grams?: number | null;
   weight_grams?: number | null;

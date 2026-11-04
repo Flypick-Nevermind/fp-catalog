@@ -22,6 +22,7 @@ const productSchema = z.object({
   name: z.string().min(2, "Nama produk minimal 2 karakter"),
   slug: z.string().min(2, "Slug produk wajib diisi"),
   description: z.string().optional().default(""),
+  source_url: z.string().optional().default(""),
   price: z.coerce.number().min(0, "Harga tidak boleh negatif"),
   actual_weight_grams: z.coerce.number().min(0).optional(),
   weight_grams: z.coerce.number().min(0).optional(),
@@ -141,6 +142,7 @@ export async function saveProductAction(
     const supabase = createSupabaseAdmin();
 
     const cleanAttributes = getPublicAttributes(data.attributes);
+    const sourceUrl = (data.source_url || "").trim();
     const actualWeightGrams =
       typeof data.actual_weight_grams === "number" &&
       data.actual_weight_grams > 0
@@ -167,6 +169,7 @@ export async function saveProductAction(
       yuanPrice,
       yuanMultiplier,
       ratePerKg,
+      sourceUrl,
     });
 
     // Pastikan tepat satu gambar ditandai is_primary
@@ -187,6 +190,7 @@ export async function saveProductAction(
           name: data.name,
           slug: normalizedSlug,
           description: data.description,
+          source_url: sourceUrl,
           price: data.price,
           actual_weight_grams: actualWeightGrams,
           weight_grams: calcWeightGrams,
@@ -263,6 +267,7 @@ export async function saveProductAction(
           name: data.name,
           slug: normalizedSlug,
           description: data.description,
+          source_url: sourceUrl,
           price: data.price,
           actual_weight_grams: actualWeightGrams,
           weight_grams: calcWeightGrams,
@@ -506,6 +511,7 @@ export async function duplicateProductAction(
         name: clonedName,
         slug: clonedSlug,
         description: sourceProduct.description || "",
+        source_url: sourceProduct.source_url || sourceMeta.sourceUrl || "",
         price: sourceProduct.price,
         actual_weight_grams: sourceMeta.actualWeightGrams,
         weight_grams: sourceMeta.weightGrams,

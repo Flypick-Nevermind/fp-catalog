@@ -14,6 +14,7 @@ export interface JastipCalcMeta {
   yuanPrice: number;
   yuanMultiplier: number;
   ratePerKg: number;
+  sourceUrl?: string; // Link sumber barang internal admin (Taobao / Brand / Supplier)
 }
 
 /**
@@ -123,6 +124,7 @@ export function extractJastipCalcMeta(
       yuanPrice: 0,
       yuanMultiplier: DEFAULT_YUAN_MULTIPLIER,
       ratePerKg: DEFAULT_RATE_PER_KG,
+      sourceUrl: "",
     };
   }
 
@@ -131,6 +133,27 @@ export function extractJastipCalcMeta(
     product.actual_weight_grams > 0
       ? product.actual_weight_grams
       : specWeightGrams;
+
+  // Cek apakah ada metadata cadangan di `attributes` (`__jastip_calc`) untuk mengambil sourceUrl jika kolom DB belum dimigrasi
+  let fallbackParsed: Partial<JastipCalcMeta> | null = null;
+  if (product.attributes && Array.isArray(product.attributes)) {
+    const rawMetaAttr = product.attributes.find(
+      (a) => a.key === INTERNAL_CALC_ATTR_KEY
+    );
+    if (rawMetaAttr?.value) {
+      try {
+        fallbackParsed = JSON.parse(rawMetaAttr.value) as Partial<JastipCalcMeta>;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const resolvedSourceUrl =
+    (typeof product.source_url === "string" && product.source_url.trim()) ||
+    (typeof fallbackParsed?.sourceUrl === "string" &&
+      fallbackParsed.sourceUrl.trim()) ||
+    "";
 
   // 1. Cek apakah kolom khusus di tabel `products` sudah memiliki nilai yuan_price > 0
   if (
@@ -155,47 +178,44 @@ export function extractJastipCalcMeta(
         Number(product.rate_per_kg) > 0
           ? Number(product.rate_per_kg)
           : DEFAULT_RATE_PER_KG,
+      sourceUrl: resolvedSourceUrl,
     };
   }
 
   // 2. Cek metadata cadangan di `attributes` (`__jastip_calc`)
-  if (product.attributes && Array.isArray(product.attributes)) {
-    const rawMetaAttr = product.attributes.find(
-      (a) => a.key === INTERNAL_CALC_ATTR_KEY
-    );
-    if (rawMetaAttr?.value) {
-      try {
-        const parsed = JSON.parse(rawMetaAttr.value) as Partial<JastipCalcMeta>;
-        return {
-          useAutoCalc:
-            typeof parsed.useAutoCalc === "boolean" ? parsed.useAutoCalc : true,
-          actualWeightGrams:
-            typeof parsed.actualWeightGrams === "number" &&
-            parsed.actualWeightGrams > 0
-              ? parsed.actualWeightGrams
-              : dbActualWeight,
-          weightGrams:
-            typeof parsed.weightGrams === "number" && parsed.weightGrams > 0
-              ? parsed.weightGrams
-              : DEFAULT_CALC_WEIGHT_GRAMS,
-          yuanPrice:
-            typeof parsed.yuanPrice === "number" && parsed.yuanPrice >= 0
-              ? parsed.yuanPrice
-              : 0,
-          yuanMultiplier:
-            typeof parsed.yuanMultiplier === "number" &&
-            parsed.yuanMultiplier > 0
-              ? parsed.yuanMultiplier
-              : DEFAULT_YUAN_MULTIPLIER,
-          ratePerKg:
-            typeof parsed.ratePerKg === "number" && parsed.ratePerKg >= 0
-              ? parsed.ratePerKg
-              : DEFAULT_RATE_PER_KG,
-        };
-      } catch {
-        // Lanjut ke deteksi otomatis jika JSON gagal di-parse
-      }
-    }
+  if (fallbackParsed) {
+    return {
+      useAutoCalc:
+        typeof fallbackParsed.useAutoCalc === "boolean"
+          ? fallbackParsed.useAutoCalc
+          : true,
+      actualWeightGrams:
+        typeof fallbackParsed.actualWeightGrams === "number" &&
+        fallbackParsed.actualWeightGrams > 0
+          ? fallbackParsed.actualWeightGrams
+          : dbActualWeight,
+      weightGrams:
+        typeof fallbackParsed.weightGrams === "number" &&
+        fallbackParsed.weightGrams > 0
+          ? fallbackParsed.weightGrams
+          : DEFAULT_CALC_WEIGHT_GRAMS,
+      yuanPrice:
+        typeof fallbackParsed.yuanPrice === "number" &&
+        fallbackParsed.yuanPrice >= 0
+          ? fallbackParsed.yuanPrice
+          : 0,
+      yuanMultiplier:
+        typeof fallbackParsed.yuanMultiplier === "number" &&
+        fallbackParsed.yuanMultiplier > 0
+          ? fallbackParsed.yuanMultiplier
+          : DEFAULT_YUAN_MULTIPLIER,
+      ratePerKg:
+        typeof fallbackParsed.ratePerKg === "number" &&
+        fallbackParsed.ratePerKg >= 0
+          ? fallbackParsed.ratePerKg
+          : DEFAULT_RATE_PER_KG,
+      sourceUrl: resolvedSourceUrl,
+    };
   }
 
   // 3. Fallback cerdas untuk produk lama di database:
@@ -233,6 +253,7 @@ export function extractJastipCalcMeta(
             yuanPrice: inferredYuan,
             yuanMultiplier: DEFAULT_YUAN_MULTIPLIER,
             ratePerKg: rate,
+            sourceUrl: resolvedSourceUrl,
           };
         }
       }
@@ -249,6 +270,7 @@ export function extractJastipCalcMeta(
     yuanPrice: 0,
     yuanMultiplier: DEFAULT_YUAN_MULTIPLIER,
     ratePerKg: DEFAULT_RATE_PER_KG,
+    sourceUrl: resolvedSourceUrl,
   };
 }
 
@@ -271,6 +293,7 @@ export function attachJastipCalcMeta(
         yuanPrice: Number(meta.yuanPrice) || 0,
         yuanMultiplier: Number(meta.yuanMultiplier) || DEFAULT_YUAN_MULTIPLIER,
         ratePerKg: Number(meta.ratePerKg) || DEFAULT_RATE_PER_KG,
+        sourceUrl: (meta.sourceUrl || "").trim(),
       }),
     },
   ];

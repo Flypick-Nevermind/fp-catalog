@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS public.products (
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
   description TEXT DEFAULT '',
+  source_url TEXT DEFAULT '',
   price NUMERIC(15, 2) NOT NULL DEFAULT 0 CHECK (price >= 0),
   actual_weight_grams INT NOT NULL DEFAULT 0 CHECK (actual_weight_grams >= 0),
   weight_grams INT NOT NULL DEFAULT 1000 CHECK (weight_grams >= 0),

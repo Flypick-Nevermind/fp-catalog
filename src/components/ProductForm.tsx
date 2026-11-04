@@ -40,6 +40,7 @@ import { formatIDR, slugify } from "@/lib/utils";
 const formSchema = z.object({
   name: z.string().min(2, "Nama produk minimal 2 karakter"),
   slug: z.string().min(2, "Slug wajib diisi"),
+  source_url: z.string().optional().default(""),
   category_id: z.string().nullable().optional(),
   price: z.coerce.number().min(0, "Harga tidak boleh negatif"),
   status: z.enum(["published", "draft"]),
@@ -83,9 +84,12 @@ function mapProductToFormValues(product: Product): ProductFormValues {
   const attrs =
     publicAttrs.length > 0 ? publicAttrs : [{ key: "Weight", value: "" }];
 
+  const calcMeta = extractJastipCalcMeta(product);
+
   return {
     name: product.name || "",
     slug: product.slug || "",
+    source_url: product.source_url || calcMeta.sourceUrl || "",
     category_id: product.category_id || "",
     price: Number(product.price ?? 44000),
     status: product.status || "published",
@@ -139,6 +143,7 @@ export default function ProductForm({
     : {
         name: "",
         slug: "",
+        source_url: "",
         category_id: "",
         price: 220000,
         status: "published",
@@ -430,6 +435,27 @@ export default function ProductForm({
                   {errors.slug.message}
                 </p>
               )}
+            </div>
+
+            {/* Link Sumber Barang (Khusus Internal Admin) */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="block text-sm font-medium text-slate-700">
+                  Link Sumber Barang / Supplier{" "}
+                  <span className="text-xs font-normal text-slate-400">
+                    (Khusus Catatan Internal Admin)
+                  </span>
+                </label>
+              </div>
+              <input
+                type="text"
+                placeholder="Contoh: https://item.taobao.com/item.htm?id=... atau tautan supplier"
+                {...register("source_url")}
+                className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 placeholder:text-slate-400"
+              />
+              <p className="mt-1 text-[11px] text-slate-400">
+                Tautan ini tidak akan tampil ke pembeli di katalog publik, hanya untuk memudahkan admin memesan barang kembali.
+              </p>
             </div>
 
             {/* Deskripsi Produk */}
