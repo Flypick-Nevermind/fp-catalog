@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import imageCompression from "browser-image-compression";
 import {
   UploadCloud,
@@ -11,6 +11,8 @@ import {
   ImagePlus,
   ChevronLeft,
   ChevronRight,
+  ClipboardPaste,
+  CheckCircle2,
 } from "lucide-react";
 import { supabasePublic } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -40,8 +42,21 @@ export default function MultiImageUploader({
 }: MultiImageUploaderProps) {
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pasteNotice, setPasteNotice] = useState<string | null>(null);
+  const [isDropzoneHovered, setIsDropzoneHovered] = useState<boolean>(false);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Ref agar listener paste selalu membaca daftar gambar paling mutakhir
+  const latestValueRef = useRef<UploadedImageItem[]>(value);
+  useEffect(() => {
+    latestValueRef.current = value;
+  }, [value]);
+
+  const latestOnChangeRef = useRef(onChange);
+  useEffect(() => {
+    latestOnChangeRef.current = onChange;
+  }, [onChange]);
 
   /**
    * Menormalisasi urutan array foto:
@@ -58,103 +73,234 @@ export default function MultiImageUploader({
     }));
   };
 
+  /**
+   * Memproses array File gambar (dari pilih file, drag & drop, maupun Paste Clipboard):
+   * Kompresi ke WebP < 200KB lalu unggah ke Supabase Storage `product-media`.
+   */
+  const processAndUploadFiles = useCallback(
+    async (fileArray: File[], sourceLabel?: string) => {
+      if (!fileArray || fileArray.length === 0) return;
+
+      setUploadError(null);
+      if (sourceLabel) {
+        setPasteNotice(sourceLabel);
+        setTimeout(() => setPasteNotice(null), 3500);
+      }
+
+      const newPending: PendingUpload[] = fileArray.map((file, idx) => ({
+        id: `${Date.now()}-${idx}-${file.name || "clipboard.png"}`,
+        fileName: file.name || `Screenshot-${idx + 1}.png`,
+        progressText: "Mengompresi WebP...",
+      }));
+
+      setPendingUploads((prev) => [...prev, ...newPending]);
+
+      const uploadedResults: UploadedImageItem[] = [];
+
+      for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        const pendingId = newPending[i].id;
+
+        try {
+          // 1. Kompresi di sisi browser (< 200KB, maxWidthOrHeight: 1200px, WebP)
+          const compressedBlob = await imageCompression(file, {
+            maxSizeMB: 0.19, // ~195 KB (< 200KB)
+            maxWidthOrHeight: 1200,
+            useWebWorker: true,
+            fileType: "image/webp",
+            initialQuality: 0.82,
+          });
+
+          setPendingUploads((prev) =>
+            prev.map((item) =>
+              item.id === pendingId
+                ? { ...item, progressText: "Mengunggah ke Supabase..." }
+                : item
+            )
+          );
+
+          // 2. Buat nama file unik .webp
+          const rawName = file.name || `paste-${Date.now()}.png`;
+          const cleanBaseName =
+            rawName
+              .replace(/\.[^/.]+$/, "")
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, "-")
+              .slice(0, 40) || "image";
+          const filePath = `products/${Date.now()}-${Math.random()
+            .toString(36)
+            .substring(2, 8)}-${cleanBaseName}.webp`;
+
+          // 3. Unggah ke Supabase Storage bucket `product-media`
+          const { error: storageError } = await supabasePublic.storage
+            .from("product-media")
+            .upload(filePath, compressedBlob, {
+              contentType: "image/webp",
+              cacheControl: "3600",
+              upsert: false,
+            });
+
+          if (storageError) {
+            throw new Error(storageError.message);
+          }
+
+          // 4. Dapatkan Public URL
+          const { data: publicUrlData } = supabasePublic.storage
+            .from("product-media")
+            .getPublicUrl(filePath);
+
+          if (!publicUrlData?.publicUrl) {
+            throw new Error("Gagal mendapatkan URL publik gambar.");
+          }
+
+          uploadedResults.push({
+            image_url: publicUrlData.publicUrl,
+            is_primary: false,
+            order_index:
+              latestValueRef.current.length + uploadedResults.length,
+          });
+        } catch (err) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Gagal mengunggah gambar ke storage.";
+          setUploadError(
+            `Gagal memproses "${file.name || "gambar clipboard"}": ${message}`
+          );
+        } finally {
+          setPendingUploads((prev) =>
+            prev.filter((item) => item.id !== pendingId)
+          );
+        }
+      }
+
+      if (uploadedResults.length > 0) {
+        const merged = [...latestValueRef.current, ...uploadedResults];
+        const normalized = normalizeOrderedList(merged);
+        latestValueRef.current = normalized;
+        latestOnChangeRef.current(normalized);
+      }
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    []
+  );
+
+  /**
+   * Listener global untuk menangkap Ctrl+V / Cmd+V gambar dari clipboard
+   * kapan saja saat Admin berada di halaman form produk.
+   */
+  useEffect(() => {
+    const handleWindowPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items || items.length === 0) return;
+
+      const imageFiles: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/")) {
+          const blob = item.getAsFile();
+          if (blob) {
+            const ext = item.type.split("/")[1] || "png";
+            const namedFile = new File(
+              [blob],
+              `clipboard-${Date.now()}-${i + 1}.${ext}`,
+              { type: item.type }
+            );
+            imageFiles.push(namedFile);
+          }
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        processAndUploadFiles(
+          imageFiles,
+          `${imageFiles.length} foto dari Clipboard (Ctrl+V / Cmd+V) berhasil ditempel & sedang diunggah!`
+        );
+      }
+    };
+
+    window.addEventListener("paste", handleWindowPaste);
+    return () => {
+      window.removeEventListener("paste", handleWindowPaste);
+    };
+  }, [processAndUploadFiles]);
+
+  /**
+   * Tombol klik manual "Paste dari Clipboard" (menggunakan Clipboard API browser)
+   */
+  const handleManualClipboardPaste = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setUploadError(null);
+
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.read) {
+        setUploadError(
+          "Browser Anda tidak mendukung tombol baca clipboard langsung. Silakan tekan Ctrl+V atau Cmd+V pada keyboard."
+        );
+        return;
+      }
+
+      const clipboardItems = await navigator.clipboard.read();
+      const imageFiles: File[] = [];
+
+      for (let i = 0; i < clipboardItems.length; i++) {
+        const clipItem = clipboardItems[i];
+        const imageType = clipItem.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await clipItem.getType(imageType);
+          const ext = imageType.split("/")[1] || "png";
+          const file = new File(
+            [blob],
+            `clipboard-${Date.now()}-${i + 1}.${ext}`,
+            { type: imageType }
+          );
+          imageFiles.push(file);
+        }
+      }
+
+      if (imageFiles.length === 0) {
+        setUploadError(
+          "Tidak ada gambar di clipboard. Silakan screenshot atau Copy Image terlebih dahulu, lalu tekan Ctrl+V / Cmd+V."
+        );
+        return;
+      }
+
+      await processAndUploadFiles(
+        imageFiles,
+        `${imageFiles.length} foto dari Clipboard berhasil ditempel & sedang diunggah!`
+      );
+    } catch {
+      setUploadError(
+        "Izin akses clipboard ditolak atau kosong. Anda cukup menekan tombol Ctrl+V (Windows) atau Cmd+V (Mac) langsung di halaman ini."
+      );
+    }
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    await processAndUploadFiles(Array.from(files));
+  };
 
-    setUploadError(null);
-    const fileArray = Array.from(files);
+  const handleDropzoneFileDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDropzoneHovered(false);
 
-    // Buat daftar indikator loading per file
-    const newPending: PendingUpload[] = fileArray.map((file, idx) => ({
-      id: `${Date.now()}-${idx}-${file.name}`,
-      fileName: file.name,
-      progressText: "Mengompresi WebP...",
-    }));
+    // Abaikan jika sedang drag-reorder thumbnail internal
+    if (draggedIndex !== null) return;
 
-    setPendingUploads((prev) => [...prev, ...newPending]);
+    const droppedFiles = e.dataTransfer?.files;
+    if (!droppedFiles || droppedFiles.length === 0) return;
 
-    const uploadedResults: UploadedImageItem[] = [];
-
-    for (let i = 0; i < fileArray.length; i++) {
-      const file = fileArray[i];
-      const pendingId = newPending[i].id;
-
-      try {
-        // 1. Kompresi di sisi browser (< 200KB, maxWidthOrHeight: 1200px, WebP)
-        const compressedBlob = await imageCompression(file, {
-          maxSizeMB: 0.19, // ~195 KB (< 200KB)
-          maxWidthOrHeight: 1200,
-          useWebWorker: true,
-          fileType: "image/webp",
-          initialQuality: 0.82,
-        });
-
-        setPendingUploads((prev) =>
-          prev.map((item) =>
-            item.id === pendingId
-              ? { ...item, progressText: "Mengunggah ke Supabase..." }
-              : item
-          )
-        );
-
-        // 2. Buat nama file unik .webp
-        const cleanBaseName = file.name
-          .replace(/\.[^/.]+$/, "")
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, "-")
-          .slice(0, 40);
-        const filePath = `products/${Date.now()}-${Math.random()
-          .toString(36)
-          .substring(2, 8)}-${cleanBaseName}.webp`;
-
-        // 3. Unggah ke Supabase Storage bucket `product-media`
-        const { error: storageError } = await supabasePublic.storage
-          .from("product-media")
-          .upload(filePath, compressedBlob, {
-            contentType: "image/webp",
-            cacheControl: "3600",
-            upsert: false,
-          });
-
-        if (storageError) {
-          throw new Error(storageError.message);
-        }
-
-        // 4. Dapatkan Public URL
-        const { data: publicUrlData } = supabasePublic.storage
-          .from("product-media")
-          .getPublicUrl(filePath);
-
-        if (!publicUrlData?.publicUrl) {
-          throw new Error("Gagal mendapatkan URL publik gambar.");
-        }
-
-        uploadedResults.push({
-          image_url: publicUrlData.publicUrl,
-          is_primary: false,
-          order_index: value.length + uploadedResults.length,
-        });
-      } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Gagal mengunggah gambar ke storage.";
-        setUploadError(`Gagal memproses "${file.name}": ${message}`);
-      } finally {
-        setPendingUploads((prev) =>
-          prev.filter((item) => item.id !== pendingId)
-        );
-      }
-    }
-
-    if (uploadedResults.length > 0) {
-      const merged = [...value, ...uploadedResults];
-      onChange(normalizeOrderedList(merged));
-    }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+    const imageFiles = Array.from(droppedFiles).filter((f) =>
+      f.type.startsWith("image/")
+    );
+    if (imageFiles.length > 0) {
+      await processAndUploadFiles(imageFiles);
     }
   };
 
@@ -199,12 +345,20 @@ export default function MultiImageUploader({
 
   return (
     <div className="space-y-4">
-      {/* Dropzone / Trigger Area */}
+      {/* Dropzone / Trigger Area + Paste Shortcut */}
       <div
         onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (draggedIndex === null) setIsDropzoneHovered(true);
+        }}
+        onDragLeave={() => setIsDropzoneHovered(false)}
+        onDrop={handleDropzoneFileDrop}
         className={cn(
-          "group relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition-all",
-          error
+          "group relative flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-7 text-center transition-all",
+          isDropzoneHovered
+            ? "border-sky-500 bg-sky-50/60"
+            : error
             ? "border-red-300 bg-red-50/40 hover:border-red-400"
             : "border-slate-300 bg-slate-50/60 hover:border-slate-900 hover:bg-slate-50"
         )}
@@ -222,13 +376,39 @@ export default function MultiImageUploader({
           <UploadCloud className="h-6 w-6 text-slate-700" />
         </div>
         <p className="text-sm font-semibold text-slate-800">
-          Klik untuk memilih beberapa foto produk
+          Klik untuk pilih foto, Drag &amp; Drop, atau tekan{" "}
+          <kbd className="rounded-md border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs font-bold text-slate-900 shadow-2xs">
+            Ctrl+V
+          </kbd>{" "}
+          /{" "}
+          <kbd className="rounded-md border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs font-bold text-slate-900 shadow-2xs">
+            &#8984;V
+          </kbd>
         </p>
         <p className="mt-1 text-xs text-slate-500">
-          Otomatis dikompresi ke WebP (Maks. 1200px, &lt; 200KB). Geser panah
-          atau drag foto untuk mengatur urutan.
+          Habis screenshot produk? Langsung tekan Paste di halaman ini &mdash;
+          otomatis dikompresi ke WebP (&lt; 200KB).
         </p>
+
+        <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={handleManualClipboardPaste}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-1.5 text-xs font-semibold text-sky-800 shadow-2xs transition hover:border-sky-300 hover:bg-sky-100"
+          >
+            <ClipboardPaste className="h-3.5 w-3.5 text-sky-600" />
+            <span>Paste Foto dari Clipboard</span>
+          </button>
+        </div>
       </div>
+
+      {/* Notifikasi Sukses Paste Clipboard */}
+      {pasteNotice && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-medium text-emerald-800">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span>{pasteNotice}</span>
+        </div>
+      )}
 
       {/* Pesan Error Validasi atau Upload */}
       {(error || uploadError) && (
