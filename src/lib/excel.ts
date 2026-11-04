@@ -673,3 +673,521 @@ export function downloadProductsExcel(
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+// ============================================================================
+// FITUR IMPORT / UPLOAD BULKY PRODUK DARI FILE EXCEL (.XLSX & .CSV)
+// ============================================================================
+
+export interface ParsedProductImportRow {
+  rowIndex: number;
+  sourceUrl: string;
+  slug: string;
+  name: string;
+  categoryName: string;
+  status: "published" | "draft";
+  yuanPrice: number;
+  yuanMultiplier: number;
+  actualWeightGrams: number;
+  weightGrams: number;
+  ratePerKg: number;
+  finalPrice: number;
+  isPriceCalculated: boolean;
+  description: string;
+  error?: string;
+}
+
+export interface ParsedProductImportResult {
+  rows: ParsedProductImportRow[];
+  summary: {
+    totalRows: number;
+    validRows: number;
+    errorRows: number;
+  };
+}
+
+/**
+ * Decompress buffer menggunakan Web Streams DecompressionStream (deflate-raw)
+ */
+async function decompressDeflateRaw(
+  compressed: Uint8Array
+): Promise<Uint8Array> {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error(
+      "Browser tidak mendukung DecompressionStream untuk membaca file Excel (.xlsx)."
+    );
+  }
+  const ds = new DecompressionStream("deflate-raw");
+  const writer = ds.writable.getWriter();
+  writer.write(compressed as unknown as BufferSource);
+  writer.close();
+  const reader = ds.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+  const totalLen = chunks.reduce((acc, c) => acc + c.length, 0);
+  const out = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return out;
+}
+
+/**
+ * Membaca entri file dari arsip ZIP (struktur dasar file .xlsx)
+ */
+async function readZipEntries(
+  buffer: ArrayBuffer
+): Promise<Map<string, string>> {
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  const decoder = new TextDecoder();
+  const filesMap = new Map<string, string>();
+
+  // Cari EOCD signature (0x06054b50) dari akhir file
+  let eocdOffset = -1;
+  const searchStart = Math.max(0, buffer.byteLength - 65557);
+  for (let i = buffer.byteLength - 22; i >= searchStart; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+
+  if (eocdOffset === -1) {
+    throw new Error("Format file Excel (.xlsx) tidak valid atau rusak.");
+  }
+
+  const totalEntries = view.getUint16(eocdOffset + 10, true);
+  const centralDirOffset = view.getUint32(eocdOffset + 16, true);
+
+  let curOffset = centralDirOffset;
+  for (let idx = 0; idx < totalEntries; idx++) {
+    if (view.getUint32(curOffset, true) !== 0x02014b50) {
+      break;
+    }
+
+    const compressionMethod = view.getUint16(curOffset + 10, true);
+    const compressedSize = view.getUint32(curOffset + 20, true);
+    const fileNameLen = view.getUint16(curOffset + 28, true);
+    const extraFieldLen = view.getUint16(curOffset + 30, true);
+    const fileCommentLen = view.getUint16(curOffset + 32, true);
+    const localHeaderOffset = view.getUint32(curOffset + 42, true);
+
+    const fileNameBytes = bytes.subarray(
+      curOffset + 46,
+      curOffset + 46 + fileNameLen
+    );
+    const fileName = decoder.decode(fileNameBytes);
+
+    curOffset += 46 + fileNameLen + extraFieldLen + fileCommentLen;
+
+    // Baca data file dari Local Header
+    if (view.getUint32(localHeaderOffset, true) === 0x04034b50) {
+      const localFileNameLen = view.getUint16(localHeaderOffset + 26, true);
+      const localExtraLen = view.getUint16(localHeaderOffset + 28, true);
+      const dataStart =
+        localHeaderOffset + 30 + localFileNameLen + localExtraLen;
+      const dataEnd = dataStart + compressedSize;
+      const compressedData = bytes.subarray(dataStart, dataEnd);
+
+      let decompressedBytes: Uint8Array;
+      if (compressionMethod === 0) {
+        decompressedBytes = compressedData;
+      } else if (compressionMethod === 8) {
+        decompressedBytes = await decompressDeflateRaw(compressedData);
+      } else {
+        continue;
+      }
+
+      filesMap.set(fileName, decoder.decode(decompressedBytes));
+    }
+  }
+
+  return filesMap;
+}
+
+/**
+ * Konversi string huruf kolom (A, B, AA) ke indeks 0-based
+ */
+function columnLetterToIndex(colStr: string): number {
+  let index = 0;
+  for (let i = 0; i < colStr.length; i++) {
+    index = index * 26 + (colStr.charCodeAt(i) - 64);
+  }
+  return index - 1;
+}
+
+/**
+ * Parsing sel ref seperti "A1", "C12" menjadi { col, row }
+ */
+function parseCellRef(ref: string): { col: number; row: number } {
+  const match = ref.match(/^([A-Za-z]+)(\d+)$/);
+  if (!match) return { col: 0, row: 0 };
+  const col = columnLetterToIndex(match[1].toUpperCase());
+  const row = parseInt(match[2], 10) - 1;
+  return { col, row };
+}
+
+/**
+ * Parsing file .xlsx menjadi array 2D baris teks
+ */
+async function parseXlsxToRows(buffer: ArrayBuffer): Promise<string[][]> {
+  const files = await readZipEntries(buffer);
+
+  // 1. Ambil tabel shared strings jika ada
+  const sharedStrings: string[] = [];
+  const sstXml =
+    files.get("xl/sharedStrings.xml") || files.get("xl/SharedStrings.xml");
+  if (sstXml && typeof DOMParser !== "undefined") {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(sstXml, "application/xml");
+    const siElements = doc.getElementsByTagName("si");
+    for (let i = 0; i < siElements.length; i++) {
+      const si = siElements[i];
+      // Teks bisa berada langsung di <t> atau dipecah dalam <r><t>
+      const tElements = si.getElementsByTagName("t");
+      let text = "";
+      for (let j = 0; j < tElements.length; j++) {
+        text += tElements[j].textContent || "";
+      }
+      sharedStrings.push(text);
+    }
+  }
+
+  // 2. Ambil worksheet pertama
+  let sheetXml =
+    files.get("xl/worksheets/sheet1.xml") ||
+    files.get("xl/worksheets/Sheet1.xml");
+  if (!sheetXml) {
+    files.forEach((val, key) => {
+      if (
+        !sheetXml &&
+        key.startsWith("xl/worksheets/sheet") &&
+        key.endsWith(".xml")
+      ) {
+        sheetXml = val;
+      }
+    });
+  }
+
+  if (!sheetXml) {
+    throw new Error(
+      "Tidak ditemukan worksheet data produk pada file Excel ini."
+    );
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(sheetXml, "application/xml");
+  const rowElements = doc.getElementsByTagName("row");
+
+  const tableRows: string[][] = [];
+
+  for (let rIdx = 0; rIdx < rowElements.length; rIdx++) {
+    const rowEl = rowElements[rIdx];
+    const rowNumAttr = rowEl.getAttribute("r");
+    const parsedRowNum = rowNumAttr
+      ? parseInt(rowNumAttr, 10) - 1
+      : tableRows.length;
+
+    while (tableRows.length <= parsedRowNum) {
+      tableRows.push([]);
+    }
+    const currentRow = tableRows[parsedRowNum];
+
+    const cElements = rowEl.getElementsByTagName("c");
+    for (let cIdx = 0; cIdx < cElements.length; cIdx++) {
+      const cell = cElements[cIdx];
+      const cellRef = cell.getAttribute("r") || "";
+      const { col } = parseCellRef(cellRef);
+      const cellType = cell.getAttribute("t");
+
+      let cellValue = "";
+      if (cellType === "s") {
+        // Shared String index
+        const vEl = cell.getElementsByTagName("v")[0];
+        const sstIdx = vEl ? parseInt(vEl.textContent || "", 10) : -1;
+        cellValue = sstIdx >= 0 ? sharedStrings[sstIdx] || "" : "";
+      } else if (cellType === "inlineStr") {
+        const isEl = cell.getElementsByTagName("is")[0];
+        cellValue = isEl?.textContent || "";
+      } else {
+        const vEl = cell.getElementsByTagName("v")[0];
+        cellValue = vEl?.textContent || "";
+      }
+
+      while (currentRow.length <= col) {
+        currentRow.push("");
+      }
+      currentRow[col] = cellValue.trim();
+    }
+  }
+
+  return tableRows.filter((r) => r.some((val) => val !== ""));
+}
+
+/**
+ * Parsing file CSV jika admin mengunggah format CSV
+ */
+function parseCsvToRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
+  let inQuotes = false;
+
+  const firstLine = text.split(/\r?\n/)[0] || "";
+  const delimiter =
+    firstLine.split(";").length > firstLine.split(",").length ? ";" : ",";
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentCell += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      currentRow.push(currentCell.trim());
+      currentCell = "";
+    } else if ((char === "\r" || char === "\n") && !inQuotes) {
+      if (char === "\r" && nextChar === "\n") i++;
+      currentRow.push(currentCell.trim());
+      if (currentRow.some((c) => c !== "")) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentCell = "";
+    } else {
+      currentCell += char;
+    }
+  }
+
+  if (currentCell || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    if (currentRow.some((c) => c !== "")) {
+      rows.push(currentRow);
+    }
+  }
+
+  return rows;
+}
+
+/**
+ * Membersihkan format angka (menghapus titik ribuan, Rp, ¥, koma desimal)
+ */
+function cleanNumber(val: string | number | undefined | null): number {
+  if (typeof val === "number") return val;
+  if (!val) return 0;
+  const str = String(val)
+    .replace(/[Rp¥$,]/gi, "")
+    .replace(/\s+/g, "")
+    .trim();
+  const num = parseFloat(str);
+  return Number.isFinite(num) ? num : 0;
+}
+
+/**
+ * Fungsi Utama: Parsing File (.xlsx / .csv) yang di-upload oleh Admin
+ */
+export async function parseProductImportFile(
+  file: File
+): Promise<ParsedProductImportResult> {
+  const fileName = file.name.toLowerCase();
+  let rawRows: string[][] = [];
+
+  if (fileName.endsWith(".xlsx")) {
+    const buffer = await file.arrayBuffer();
+    rawRows = await parseXlsxToRows(buffer);
+  } else if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
+    const text = await file.text();
+    rawRows = parseCsvToRows(text);
+  } else {
+    throw new Error(
+      "Format file tidak didukung. Harap unggah file Excel (.xlsx) atau .csv."
+    );
+  }
+
+  if (rawRows.length < 2) {
+    throw new Error(
+      "File Excel tidak memiliki data baris produk (minimal harus ada 1 baris header dan 1 baris produk)."
+    );
+  }
+
+  // Deteksi indeks kolom berdasarkan nama header (sangat fleksibel terhadap urutan kolom)
+  const headers = rawRows[0].map((h) => h.toLowerCase().trim());
+
+  let linkIdx = -1;
+  let slugIdx = -1;
+  let nameIdx = -1;
+  let categoryIdx = -1;
+  let statusIdx = -1;
+  let yuanIdx = -1;
+  let kursIdx = -1;
+  let actualWeightIdx = -1;
+  let weightIdx = -1;
+  let rateIdx = -1;
+  let priceIdx = -1;
+  let descIdx = -1;
+
+  headers.forEach((h, idx) => {
+    if (
+      linkIdx === -1 &&
+      (h.includes("link") || h.includes("sumber") || h.includes("supplier") || h.includes("url sumber"))
+    ) {
+      linkIdx = idx;
+    } else if (slugIdx === -1 && h.includes("slug")) {
+      slugIdx = idx;
+    } else if (
+      nameIdx === -1 &&
+      (h.includes("nama") || h.includes("name") || h.includes("produk") || h.includes("product")) &&
+      !h.includes("link") &&
+      !h.includes("id")
+    ) {
+      nameIdx = idx;
+    } else if (categoryIdx === -1 && (h.includes("kategori") || h.includes("category"))) {
+      categoryIdx = idx;
+    } else if (statusIdx === -1 && h.includes("status")) {
+      statusIdx = idx;
+    } else if (yuanIdx === -1 && (h.includes("yuan") || h.includes("¥") || h.includes("rmb"))) {
+      yuanIdx = idx;
+    } else if (kursIdx === -1 && (h.includes("kurs") || h.includes("multiplier") || h.includes("pengali"))) {
+      kursIdx = idx;
+    } else if (actualWeightIdx === -1 && (h.includes("riil") || h.includes("actual"))) {
+      actualWeightIdx = idx;
+    } else if (
+      weightIdx === -1 &&
+      (h.includes("tagihan") || h.includes("jastip") || h.includes("berat") || h.includes("weight")) &&
+      !h.includes("riil") &&
+      !h.includes("actual")
+    ) {
+      weightIdx = idx;
+    } else if (rateIdx === -1 && (h.includes("tarif") || h.includes("ongkir") || h.includes("rate"))) {
+      rateIdx = idx;
+    } else if (
+      priceIdx === -1 &&
+      (h.includes("harga jual") || h.includes("harga final") || h.includes("final") || h.includes("price") || h.includes("harga")) &&
+      !h.includes("yuan") &&
+      !h.includes("dasar")
+    ) {
+      priceIdx = idx;
+    } else if (descIdx === -1 && (h.includes("deskripsi") || h.includes("desc") || h.includes("keterangan"))) {
+      descIdx = idx;
+    }
+  });
+
+  if (nameIdx === -1) {
+    throw new Error(
+      "Kolom 'Nama Produk' tidak ditemukan pada baris header file Excel."
+    );
+  }
+
+  const parsedRows: ParsedProductImportRow[] = [];
+  let validCount = 0;
+  let errorCount = 0;
+
+  for (let r = 1; r < rawRows.length; r++) {
+    const row = rawRows[r];
+    const name = (nameIdx >= 0 ? row[nameIdx] : "")?.trim() || "";
+
+    // Lewati baris contoh template jika ada
+    if (name.toUpperCase().startsWith("CONTOH:")) {
+      continue;
+    }
+
+    if (!name) {
+      errorCount++;
+      parsedRows.push({
+        rowIndex: r + 1,
+        sourceUrl: "",
+        slug: "",
+        name: "",
+        categoryName: "",
+        status: "draft",
+        yuanPrice: 0,
+        yuanMultiplier: DEFAULT_YUAN_MULTIPLIER,
+        actualWeightGrams: 0,
+        weightGrams: DEFAULT_CALC_WEIGHT_GRAMS,
+        ratePerKg: DEFAULT_RATE_PER_KG,
+        finalPrice: 0,
+        isPriceCalculated: false,
+        description: "",
+        error: "Nama Produk kosong (wajib diisi).",
+      });
+      continue;
+    }
+
+    const sourceUrl = (linkIdx >= 0 ? row[linkIdx] : "")?.trim() || "";
+    const slug = (slugIdx >= 0 ? row[slugIdx] : "")?.trim() || "";
+    const categoryName =
+      (categoryIdx >= 0 ? row[categoryIdx] : "")?.trim() || "";
+
+    const rawStatus = (
+      statusIdx >= 0 ? row[statusIdx] : ""
+    )?.toLowerCase().trim();
+    const status: "published" | "draft" =
+      rawStatus === "published" || rawStatus === "publish"
+        ? "published"
+        : "draft";
+
+    const yuanPrice = cleanNumber(yuanIdx >= 0 ? row[yuanIdx] : 0);
+    const yuanMultiplier =
+      cleanNumber(kursIdx >= 0 ? row[kursIdx] : 0) || DEFAULT_YUAN_MULTIPLIER;
+    const actualWeightGrams = cleanNumber(
+      actualWeightIdx >= 0 ? row[actualWeightIdx] : 0
+    );
+    const weightGrams =
+      cleanNumber(weightIdx >= 0 ? row[weightIdx] : 0) ||
+      DEFAULT_CALC_WEIGHT_GRAMS;
+    const ratePerKg =
+      cleanNumber(rateIdx >= 0 ? row[rateIdx] : 0) || DEFAULT_RATE_PER_KG;
+
+    let finalPrice = cleanNumber(priceIdx >= 0 ? row[priceIdx] : 0);
+    let isPriceCalculated = false;
+
+    // Otomatis hitung harga jual jika kolom harga final kosong tapi harga Yuan ada
+    if (finalPrice <= 0 && yuanPrice > 0) {
+      const chargeableKg = Math.max(weightGrams / 1000, 0.2);
+      finalPrice = Math.round(
+        yuanPrice * yuanMultiplier + chargeableKg * ratePerKg
+      );
+      isPriceCalculated = true;
+    }
+
+    const description = (descIdx >= 0 ? row[descIdx] : "")?.trim() || "";
+
+    validCount++;
+    parsedRows.push({
+      rowIndex: r + 1,
+      sourceUrl,
+      slug,
+      name,
+      categoryName,
+      status,
+      yuanPrice,
+      yuanMultiplier,
+      actualWeightGrams,
+      weightGrams,
+      ratePerKg,
+      finalPrice,
+      isPriceCalculated,
+      description,
+    });
+  }
+
+  return {
+    rows: parsedRows,
+    summary: {
+      totalRows: parsedRows.length,
+      validRows: validCount,
+      errorRows: errorCount,
+    },
+  };
+}
+

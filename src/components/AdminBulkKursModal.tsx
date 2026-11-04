@@ -146,10 +146,10 @@ export default function AdminBulkKursModal({
       <button
         type="button"
         onClick={handleOpen}
-        className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50/80 px-4 py-2.5 text-xs font-semibold text-sky-800 shadow-2xs transition hover:border-sky-300 hover:bg-sky-100/80"
+        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900"
       >
         <Calculator className="h-4 w-4 text-sky-600" />
-        <span>Update Kurs Massal</span>
+        <span>Update Kurs</span>
       </button>
 
       {isOpen && (

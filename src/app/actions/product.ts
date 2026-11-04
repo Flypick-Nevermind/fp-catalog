@@ -1038,3 +1038,326 @@ export async function bulkDeleteProductsAction(
     };
   }
 }
+
+export interface BulkImportProductItem {
+  sourceUrl?: string;
+  slug?: string;
+  name: string;
+  categoryName?: string;
+  status: "published" | "draft";
+  yuanPrice?: number;
+  yuanMultiplier?: number;
+  actualWeightGrams?: number;
+  weightGrams?: number;
+  ratePerKg?: number;
+  finalPrice?: number;
+  description?: string;
+}
+
+export interface BulkImportOptions {
+  forceDraftForNew?: boolean;
+}
+
+/**
+ * Server Action: Mengimpor produk secara massal dari data Excel (.xlsx / .csv)
+ * - Mencocokkan produk berdasarkan `slug` atau `name` (Update jika ada, Insert jika baru)
+ * - Otomatis membuat kategori baru di database jika kategori belum ada
+ * - Foto pada produk yang di-update tetap utuh tidak hilang
+ */
+export async function bulkImportProductsAction(
+  items: BulkImportProductItem[],
+  options?: BulkImportOptions
+): Promise<
+  ActionResponse<{
+    createdCount: number;
+    updatedCount: number;
+    totalProcessed: number;
+  }>
+> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return {
+        success: false,
+        error: "Akses ditolak: Sesi admin tidak valid.",
+      };
+    }
+
+    if (!items || items.length === 0) {
+      return {
+        success: false,
+        error: "Tidak ada data produk yang dikirim untuk diimpor.",
+      };
+    }
+
+    const supabase = createSupabaseAdmin();
+
+    // 1. Ambil seluruh kategori yang ada
+    const { data: existingCategories, error: catError } = await supabase
+      .from("categories")
+      .select("id, name, slug");
+
+    if (catError) {
+      throw new Error(`Gagal memuat kategori: ${catError.message}`);
+    }
+
+    const categoryMap = new Map<string, { id: string; name: string }>();
+    (existingCategories || []).forEach((c) => {
+      categoryMap.set(c.name.trim().toLowerCase(), { id: c.id, name: c.name });
+    });
+
+    // 2. Ambil seluruh produk yang ada untuk pencocokan slug dan nama
+    const { data: existingProducts, error: prodError } = await supabase
+      .from("products")
+      .select("id, name, slug, attributes");
+
+    if (prodError) {
+      throw new Error(`Gagal memuat produk: ${prodError.message}`);
+    }
+
+    const slugMap = new Map<string, { id: string; name: string; slug: string; attributes?: any }>();
+    const nameMap = new Map<string, { id: string; name: string; slug: string; attributes?: any }>();
+    const allUsedSlugs = new Set<string>();
+
+    (existingProducts || []).forEach((p) => {
+      slugMap.set(p.slug.toLowerCase(), p);
+      nameMap.set(p.name.trim().toLowerCase(), p);
+      allUsedSlugs.add(p.slug.toLowerCase());
+    });
+
+    // 3. Buat kategori baru jika ada nama kategori di Excel yang belum terdaftar
+    const newCategoriesToCreate = new Set<string>();
+    items.forEach((item) => {
+      const catName = item.categoryName?.trim();
+      if (catName && !categoryMap.has(catName.toLowerCase())) {
+        newCategoriesToCreate.add(catName);
+      }
+    });
+
+    for (const catName of Array.from(newCategoriesToCreate)) {
+      const catSlug = slugify(catName);
+      const { data: createdCat, error: insertCatErr } = await supabase
+        .from("categories")
+        .insert({ name: catName, slug: catSlug })
+        .select("id, name, slug")
+        .single();
+
+      if (!insertCatErr && createdCat) {
+        categoryMap.set(catName.toLowerCase(), {
+          id: createdCat.id,
+          name: createdCat.name,
+        });
+      }
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    // 4. Proses update dan insert produk satu per satu
+    for (const item of items) {
+      const cleanName = item.name.trim();
+      if (!cleanName) continue;
+
+      const cleanSlug = item.slug ? slugify(item.slug) : "";
+      const catNameKey = item.categoryName?.trim().toLowerCase();
+      const targetCategoryId = catNameKey
+        ? categoryMap.get(catNameKey)?.id || null
+        : null;
+
+      const sourceUrl = (item.sourceUrl || "").trim();
+      const yuanPrice = Number(item.yuanPrice) || 0;
+      const yuanMultiplier =
+        Number(item.yuanMultiplier) > 0
+          ? Number(item.yuanMultiplier)
+          : DEFAULT_YUAN_MULTIPLIER;
+      const actualWeightGrams = Math.max(0, Number(item.actualWeightGrams) || 0);
+      const weightGrams =
+        Number(item.weightGrams) > 0
+          ? Number(item.weightGrams)
+          : DEFAULT_CALC_WEIGHT_GRAMS;
+      const ratePerKg =
+        Number(item.ratePerKg) > 0
+          ? Number(item.ratePerKg)
+          : DEFAULT_RATE_PER_KG;
+
+      let finalPrice = Number(item.finalPrice) || 0;
+      if (finalPrice <= 0 && yuanPrice > 0) {
+        const { finalPrice: calcPrice } = computeJastipFinalPrice({
+          weightGrams,
+          yuanPrice,
+          yuanMultiplier,
+          ratePerKg,
+        });
+        finalPrice = calcPrice;
+      }
+
+      const description = (item.description || "").trim();
+
+      // Cek apakah produk sudah ada (prioritaskan pencocokan via slug, lalu via nama)
+      const existing =
+        (cleanSlug ? slugMap.get(cleanSlug) : null) ||
+        nameMap.get(cleanName.toLowerCase());
+
+      if (existing) {
+        // === UPDATE EXISTING PRODUCT ===
+        const nextSlug = cleanSlug || existing.slug;
+        const fallbackMeta = attachJastipCalcMeta(
+          getPublicAttributes(existing.attributes),
+          {
+            useAutoCalc: yuanPrice > 0,
+            actualWeightGrams,
+            weightGrams,
+            yuanPrice,
+            yuanMultiplier,
+            ratePerKg,
+            sourceUrl,
+          }
+        );
+
+        let { error: updateErr } = await supabase
+          .from("products")
+          .update({
+            name: cleanName,
+            slug: nextSlug,
+            description,
+            source_url: sourceUrl,
+            price: finalPrice,
+            actual_weight_grams: actualWeightGrams,
+            weight_grams: weightGrams,
+            yuan_price: yuanPrice,
+            yuan_multiplier: yuanMultiplier,
+            rate_per_kg: ratePerKg,
+            category_id: targetCategoryId,
+            status: item.status || "published",
+          })
+          .eq("id", existing.id);
+
+        if (
+          updateErr &&
+          (updateErr.code === "PGRST204" ||
+            updateErr.code === "42703" ||
+            updateErr.message.includes("column"))
+        ) {
+          const retry = await supabase
+            .from("products")
+            .update({
+              name: cleanName,
+              slug: nextSlug,
+              description,
+              price: finalPrice,
+              category_id: targetCategoryId,
+              attributes: fallbackMeta,
+              status: item.status || "published",
+            })
+            .eq("id", existing.id);
+          updateErr = retry.error;
+        }
+
+        if (!updateErr) {
+          updatedCount++;
+        }
+      } else {
+        // === INSERT NEW PRODUCT ===
+        let baseSlug = cleanSlug || slugify(cleanName);
+        let uniqueSlug = baseSlug;
+        let counter = 2;
+        while (allUsedSlugs.has(uniqueSlug.toLowerCase())) {
+          uniqueSlug = `${baseSlug}-${counter}`;
+          counter++;
+        }
+        allUsedSlugs.add(uniqueSlug.toLowerCase());
+
+        const newStatus = options?.forceDraftForNew
+          ? "draft"
+          : item.status || "published";
+
+        const initialAttrs: any[] = [];
+        if (actualWeightGrams > 0) {
+          initialAttrs.push({
+            key: "Weight",
+            value: `${actualWeightGrams} gr`,
+          });
+        }
+
+        const fallbackMeta = attachJastipCalcMeta(initialAttrs, {
+          useAutoCalc: yuanPrice > 0,
+          actualWeightGrams,
+          weightGrams,
+          yuanPrice,
+          yuanMultiplier,
+          ratePerKg,
+          sourceUrl,
+        });
+
+        let { data: newProd, error: insertErr } = await supabase
+          .from("products")
+          .insert({
+            name: cleanName,
+            slug: uniqueSlug,
+            description,
+            source_url: sourceUrl,
+            price: finalPrice,
+            actual_weight_grams: actualWeightGrams,
+            weight_grams: weightGrams,
+            yuan_price: yuanPrice,
+            yuan_multiplier: yuanMultiplier,
+            rate_per_kg: ratePerKg,
+            category_id: targetCategoryId,
+            attributes: initialAttrs,
+            status: newStatus,
+          })
+          .select("id, name, slug")
+          .single();
+
+        if (
+          insertErr &&
+          (insertErr.code === "PGRST204" ||
+            insertErr.code === "42703" ||
+            insertErr.message.includes("column"))
+        ) {
+          const retry = await supabase
+            .from("products")
+            .insert({
+              name: cleanName,
+              slug: uniqueSlug,
+              description,
+              price: finalPrice,
+              category_id: targetCategoryId,
+              attributes: fallbackMeta,
+              status: newStatus,
+            })
+            .select("id, name, slug")
+            .single();
+          newProd = retry.data;
+          insertErr = retry.error;
+        }
+
+        if (!insertErr && newProd) {
+          createdCount++;
+          slugMap.set(uniqueSlug.toLowerCase(), newProd);
+          nameMap.set(cleanName.toLowerCase(), newProd);
+        }
+      }
+    }
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+
+    return {
+      success: true,
+      data: {
+        createdCount,
+        updatedCount,
+        totalProcessed: createdCount + updatedCount,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Gagal mengimpor data produk dari Excel.",
+    };
+  }
+}
