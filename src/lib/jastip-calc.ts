@@ -64,19 +64,51 @@ export function extractSpecWeightGrams(
 }
 
 /**
+ * Mengecek apakah kategori merupakan kategori yang dibebaskan dari batas minimum 200g (seperti Food / Makanan / Snack).
+ * Pada kategori ini, ongkir dihitung murni proporsional per gram (misal 50g = 0.05 * tarif/kg),
+ * atau jika berat belum diketahui (0 gram), ongkir = 0 sehingga harga = Harga Yuan * Pengali Kurs.
+ */
+export function isSub200gCategory(categoryNameOrSlug?: string | null): boolean {
+  if (!categoryNameOrSlug) return false;
+  const lower = categoryNameOrSlug.toLowerCase().trim();
+  return (
+    lower.includes("food") ||
+    lower.includes("makan") ||
+    lower.includes("snack") ||
+    lower.includes("cemil") ||
+    lower.includes("kuliner") ||
+    lower.includes("beverage") ||
+    lower.includes("drink") ||
+    lower.includes("minum")
+  );
+}
+
+/**
  * Menghitung rincian harga jual Jastip berdasarkan rumus resmi:
- * Harga Jual Final = (Harga Yuan * Pengali Kurs) + (max(berat_kg, 0.2) * Tarif/kg)
+ * Untuk kategori umum (Tas/dll): Harga Jual Final = (Harga Yuan * Pengali Kurs) + (max(berat_kg, 0.2) * Tarif/kg)
+ * Untuk kategori Food/Snack: Harga Jual Final = (Harga Yuan * Pengali Kurs) + (berat_kg * Tarif/kg) tanpa batas min 200g
  */
 export function computeJastipFinalPrice(
   meta: Pick<
     JastipCalcMeta,
     "weightGrams" | "yuanPrice" | "yuanMultiplier" | "ratePerKg"
-  >
+  >,
+  options?: {
+    allowSub200g?: boolean;
+    categoryNameOrSlug?: string | null;
+  }
 ) {
   const safeGrams = Math.max(0, Number(meta.weightGrams) || 0);
   const actualKg = safeGrams / 1000;
-  const chargeableKg = Math.max(actualKg, MIN_CHARGEABLE_KG);
-  const isMinWeightApplied = actualKg < MIN_CHARGEABLE_KG;
+  
+  const allowSub200 =
+    Boolean(options?.allowSub200g) ||
+    isSub200gCategory(options?.categoryNameOrSlug);
+
+  const minKg = allowSub200 ? 0 : MIN_CHARGEABLE_KG;
+  const chargeableKg = safeGrams > 0 ? Math.max(actualKg, minKg) : 0;
+  const isMinWeightApplied =
+    !allowSub200 && safeGrams > 0 && actualKg < MIN_CHARGEABLE_KG;
 
   const safeYuan = Math.max(0, Number(meta.yuanPrice) || 0);
   const safeMultiplier = Math.max(0, Number(meta.yuanMultiplier) || 0);
@@ -164,7 +196,7 @@ export function extractJastipCalcMeta(
       useAutoCalc: true,
       actualWeightGrams: dbActualWeight,
       weightGrams:
-        typeof product.weight_grams === "number" && product.weight_grams > 0
+        typeof product.weight_grams === "number" && product.weight_grams >= 0
           ? product.weight_grams
           : DEFAULT_CALC_WEIGHT_GRAMS,
       yuanPrice: Number(product.yuan_price),
@@ -196,7 +228,7 @@ export function extractJastipCalcMeta(
           : dbActualWeight,
       weightGrams:
         typeof fallbackParsed.weightGrams === "number" &&
-        fallbackParsed.weightGrams > 0
+        fallbackParsed.weightGrams >= 0
           ? fallbackParsed.weightGrams
           : DEFAULT_CALC_WEIGHT_GRAMS,
       yuanPrice:
@@ -264,7 +296,7 @@ export function extractJastipCalcMeta(
     useAutoCalc: true,
     actualWeightGrams: dbActualWeight,
     weightGrams:
-      typeof product.weight_grams === "number" && product.weight_grams > 0
+      typeof product.weight_grams === "number" && product.weight_grams >= 0
         ? product.weight_grams
         : DEFAULT_CALC_WEIGHT_GRAMS,
     yuanPrice: 0,

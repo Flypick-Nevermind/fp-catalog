@@ -13,6 +13,7 @@ import {
   extractJastipCalcMeta,
   extractSpecWeightGrams,
   computeJastipFinalPrice,
+  isSub200gCategory,
   attachJastipCalcMeta,
   getPublicAttributes,
 } from "@/lib/jastip-calc";
@@ -785,6 +786,13 @@ export async function bulkUpdateKursAction(
 
     let updatedCount = 0;
 
+    // Ambil metadata kategori untuk memeriksa apakah produk termasuk Food/Snack (bebas batas min 200g)
+    const { data: allCategories } = await supabase
+      .from("categories")
+      .select("id, name, slug");
+    const categoryMap = new Map<string, { name: string; slug: string }>();
+    (allCategories || []).forEach((c) => categoryMap.set(c.id, c));
+
     // Proses pembaruan secara paralel yang aman
     await Promise.all(
       products.map(async (prod) => {
@@ -793,14 +801,22 @@ export async function bulkUpdateKursAction(
           return;
         }
 
+        const prodCat = prod.category_id
+          ? categoryMap.get(prod.category_id)
+          : null;
+        const isFood = isSub200gCategory(prodCat?.name || prodCat?.slug);
+
         const nextRatePerKg = customRatePerKg ?? meta.ratePerKg;
         const nextWeightGrams = customWeightGrams ?? meta.weightGrams;
-        const { finalPrice } = computeJastipFinalPrice({
-          weightGrams: nextWeightGrams,
-          yuanPrice: meta.yuanPrice,
-          yuanMultiplier: newMultiplier,
-          ratePerKg: nextRatePerKg,
-        });
+        const { finalPrice } = computeJastipFinalPrice(
+          {
+            weightGrams: nextWeightGrams,
+            yuanPrice: meta.yuanPrice,
+            yuanMultiplier: newMultiplier,
+            ratePerKg: nextRatePerKg,
+          },
+          { allowSub200g: isFood }
+        );
 
         const cleanAttrs = getPublicAttributes(prod.attributes);
         const actualWeightGrams =
@@ -1171,10 +1187,18 @@ export async function bulkImportProductsAction(
           ? Number(item.yuanMultiplier)
           : DEFAULT_YUAN_MULTIPLIER;
       const actualWeightGrams = Math.max(0, Number(item.actualWeightGrams) || 0);
+      const isFoodCategory = isSub200gCategory(item.categoryName);
+      const isBagCategory = Boolean(
+        catNameKey?.includes("bag") || catNameKey?.includes("tas")
+      );
       const weightGrams =
-        Number(item.weightGrams) > 0
+        typeof item.weightGrams === "number" && item.weightGrams > 0
           ? Number(item.weightGrams)
-          : DEFAULT_CALC_WEIGHT_GRAMS;
+          : item.weightGrams === 0
+          ? 0
+          : isBagCategory
+          ? DEFAULT_CALC_WEIGHT_GRAMS
+          : 0;
       const ratePerKg =
         Number(item.ratePerKg) > 0
           ? Number(item.ratePerKg)
@@ -1182,12 +1206,15 @@ export async function bulkImportProductsAction(
 
       let finalPrice = Number(item.finalPrice) || 0;
       if (finalPrice <= 0 && yuanPrice > 0) {
-        const { finalPrice: calcPrice } = computeJastipFinalPrice({
-          weightGrams,
-          yuanPrice,
-          yuanMultiplier,
-          ratePerKg,
-        });
+        const { finalPrice: calcPrice } = computeJastipFinalPrice(
+          {
+            weightGrams,
+            yuanPrice,
+            yuanMultiplier,
+            ratePerKg,
+          },
+          { allowSub200g: isFoodCategory }
+        );
         finalPrice = calcPrice;
       }
 

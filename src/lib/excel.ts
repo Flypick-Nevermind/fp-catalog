@@ -5,6 +5,8 @@ import {
   DEFAULT_YUAN_MULTIPLIER,
   extractJastipCalcMeta,
   getPublicAttributes,
+  computeJastipFinalPrice,
+  isSub200gCategory,
 } from "@/lib/jastip-calc";
 
 export interface ExcelCell {
@@ -443,7 +445,7 @@ export function buildProductCatalogWorksheets(
   const rows: ExcelCell[][] = [];
 
   if (isTemplate) {
-    // Contoh baris pengisian untuk Template Kosong
+    // Contoh baris 1: Produk Tas / Umum (Hitungan rumus otomatis dengan Yuan & Berat)
     const sampleCategory = categories[0]?.name || "Bag";
     rows.push([
       { value: "https://item.taobao.com/item.htm?id=...", style: "muted" },
@@ -463,6 +465,29 @@ export function buildProductCatalogWorksheets(
       },
       {
         value: "Tas bahu kulit asli dengan desain minimalis dan elegan.",
+        style: "data",
+      },
+    ]);
+
+    // Contoh baris 2: Produk Food / Snack (Harga manual langsung all-in tanpa perlu pusing berat/kurs)
+    rows.push([
+      { value: "https://item.taobao.com/item.htm?id=...", style: "muted" },
+      { value: "", style: "muted" }, // Kosongkan slug untuk produk baru
+      { value: "CONTOH: Lays Stax Crisps China Edition (Food)", style: "data" },
+      { value: "Food", style: "data" },
+      { value: "draft", style: "data" },
+      { value: "", style: "muted" }, // Kolom Yuan dikosongkan
+      { value: "", style: "muted" }, // Kolom Kurs dikosongkan
+      { value: "", style: "muted" }, // Kolom Berat Riil dikosongkan
+      { value: "", style: "muted" }, // Kolom Berat Tagihan dikosongkan
+      { value: "", style: "muted" }, // Kolom Tarif Ongkir dikosongkan
+      {
+        value: 85000,
+        type: "number",
+        style: "currency",
+      },
+      {
+        value: "Keripik kentang tabung import China rasa original. Harga all-in.",
         style: "data",
       },
     ]);
@@ -597,7 +622,7 @@ export function buildProductCatalogWorksheets(
         { value: "Berat Tagihan Jastip (Gram)", style: "data" },
         { value: "Opsional", style: "data" },
         {
-          value: `Berat yang dipakai menghitung ongkir di Kalkulator Jastip. Default tas = ${DEFAULT_CALC_WEIGHT_GRAMS} gram (1 kg).`,
+          value: `Berat yang dipakai menghitung ongkir di Kalkulator Jastip. Default tas = ${DEFAULT_CALC_WEIGHT_GRAMS} gram (1 kg). Untuk kategori Food/Snack, jika belum diketahui beratnya boleh diisi 0 (ongkir Rp 0).`,
           style: "data",
         },
       ],
@@ -614,7 +639,7 @@ export function buildProductCatalogWorksheets(
         { value: "Otomatis / Manual", style: "data" },
         {
           value:
-            "Rumus otomatis: (Harga Yuan × Pengali Kurs) + ((Berat Tagihan / 1000) × Tarif Ongkir/KG).",
+            "Bisa diisi manual (all-in) atau dihitung otomatis dari rumus: (Harga Yuan × Pengali Kurs) + ((Berat Tagihan / 1000) × Tarif Ongkir/KG). Khusus kategori Food/Makanan, batas minimum 200g ditiadakan (dihitung proporsional murni per gram, atau jika berat 0 gr ongkir = Rp 0).",
           style: "data",
         },
       ],
@@ -1142,9 +1167,21 @@ export async function parseProductImportFile(
     const actualWeightGrams = cleanNumber(
       actualWeightIdx >= 0 ? row[actualWeightIdx] : 0
     );
-    const weightGrams =
-      cleanNumber(weightIdx >= 0 ? row[weightIdx] : 0) ||
-      DEFAULT_CALC_WEIGHT_GRAMS;
+    const hasExplicitWeight =
+      weightIdx >= 0 &&
+      row[weightIdx] !== undefined &&
+      row[weightIdx].trim() !== "";
+    const isFoodCategory = isSub200gCategory(categoryName);
+    const isBagCategory =
+      categoryName.toLowerCase().includes("bag") ||
+      categoryName.toLowerCase().includes("tas");
+
+    const weightGrams = hasExplicitWeight
+      ? cleanNumber(row[weightIdx])
+      : isBagCategory
+      ? DEFAULT_CALC_WEIGHT_GRAMS
+      : 0;
+
     const ratePerKg =
       cleanNumber(rateIdx >= 0 ? row[rateIdx] : 0) || DEFAULT_RATE_PER_KG;
 
@@ -1153,10 +1190,16 @@ export async function parseProductImportFile(
 
     // Otomatis hitung harga jual jika kolom harga final kosong tapi harga Yuan ada
     if (finalPrice <= 0 && yuanPrice > 0) {
-      const chargeableKg = Math.max(weightGrams / 1000, 0.2);
-      finalPrice = Math.round(
-        yuanPrice * yuanMultiplier + chargeableKg * ratePerKg
+      const { finalPrice: calcPrice } = computeJastipFinalPrice(
+        {
+          weightGrams,
+          yuanPrice,
+          yuanMultiplier,
+          ratePerKg,
+        },
+        { allowSub200g: isFoodCategory }
       );
+      finalPrice = calcPrice;
       isPriceCalculated = true;
     }
 

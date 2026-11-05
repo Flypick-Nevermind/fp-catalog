@@ -17,6 +17,7 @@ import {
   DEFAULT_YUAN_MULTIPLIER,
   extractJastipCalcMeta,
   computeJastipFinalPrice,
+  isSub200gCategory,
 } from "@/lib/jastip-calc";
 import { bulkUpdateKursAction } from "@/app/actions/product";
 import { formatIDR } from "@/lib/utils";
@@ -74,12 +75,20 @@ export default function AdminBulkKursModal({
           ? newWeightGrams
           : meta.weightGrams;
 
-        const { chargeableKg, finalPrice } = computeJastipFinalPrice({
-          weightGrams: targetWeightGrams,
-          yuanPrice: meta.yuanPrice,
-          yuanMultiplier: Number(newMultiplier) || 0,
-          ratePerKg: targetRate,
-        });
+        const productCat = categories.find((c) => c.id === product.category_id);
+        const isFood = isSub200gCategory(
+          productCat?.name || productCat?.slug || product.categories?.name
+        );
+
+        const { chargeableKg, finalPrice } = computeJastipFinalPrice(
+          {
+            weightGrams: targetWeightGrams,
+            yuanPrice: meta.yuanPrice,
+            yuanMultiplier: Number(newMultiplier) || 0,
+            ratePerKg: targetRate,
+          },
+          { allowSub200g: isFood }
+        );
 
         const oldPrice = Number(product.price) || 0;
         const diff = finalPrice - oldPrice;

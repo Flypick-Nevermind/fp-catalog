@@ -30,10 +30,13 @@ import {
   DEFAULT_RATE_PER_KG,
   DEFAULT_PROXY_COST_PER_KG,
   DEFAULT_YUAN_MULTIPLIER,
+  DEFAULT_CALC_WEIGHT_GRAMS,
   MIN_CHARGEABLE_KG,
   getPublicAttributes,
   extractJastipCalcMeta,
   extractSpecWeightGrams,
+  computeJastipFinalPrice,
+  isSub200gCategory,
 } from "@/lib/jastip-calc";
 import { formatIDR, slugify } from "@/lib/utils";
 
@@ -252,20 +255,46 @@ export default function ProductForm({
     };
   }, [syncLatestFromServer]);
 
-  // Rumus Perhitungan Jastip sesuai Infografis:
-  // Berat dikenakan = max(berat_kg, 0.2 kg)
-  // Biaya Berat = Berat dikenakan * Tarif per KG (Rp 220.000)
-  // Total Harga = Harga Dasar Barang + Biaya Berat
-  const actualKg = Math.max(0, (Number(weightGrams) || 0) / 1000);
-  const chargeableKg =
-    weightGrams > 0 ? Math.max(actualKg, MIN_CHARGEABLE_KG) : 0;
-  const isMinWeightApplied = weightGrams > 0 && actualKg < MIN_CHARGEABLE_KG;
+  const watchedCategoryId = watch("category_id");
+  const selectedCategory = categories.find((c) => c.id === watchedCategoryId);
+  const isFoodCategory = isSub200gCategory(
+    selectedCategory?.name || selectedCategory?.slug
+  );
 
-  const weightCostBuyer = Math.round(chargeableKg * (Number(ratePerKg) || 0));
-  const weightCostProxy = Math.round(chargeableKg * DEFAULT_PROXY_COST_PER_KG);
-  const estimatedMargin = weightCostBuyer - weightCostProxy;
-  const calculatedTotalPrice =
-    Math.round(Number(baseItemPrice) || 0) + weightCostBuyer;
+  // Jika produk baru beralih ke kategori Food, default-kan berat ke 0 gram jika sebelumnya masih 1.000 gram default tas
+  const prevCategoryRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (
+      !initialData?.id &&
+      isFoodCategory &&
+      prevCategoryRef.current !== watchedCategoryId
+    ) {
+      if (weightGrams === DEFAULT_CALC_WEIGHT_GRAMS) {
+        setWeightGrams(0);
+      }
+    }
+    prevCategoryRef.current = watchedCategoryId;
+  }, [initialData?.id, isFoodCategory, watchedCategoryId, weightGrams]);
+
+  // Rumus Perhitungan Jastip:
+  // Kategori Umum (Tas/Sepatu): Berat dikenakan = max(berat_kg, 0.2 kg)
+  // Kategori Food / Makanan: Tanpa batas min 200g (proporsional per gram, atau 0 kg jika berat 0)
+  const {
+    actualKg,
+    chargeableKg,
+    isMinWeightApplied,
+    shippingCost: weightCostBuyer,
+    shippingMargin: estimatedMargin,
+    finalPrice: calculatedTotalPrice,
+  } = computeJastipFinalPrice(
+    {
+      weightGrams,
+      yuanPrice,
+      yuanMultiplier,
+      ratePerKg,
+    },
+    { allowSub200g: isFoodCategory }
+  );
 
   // Sinkronkan hasil kalkulasi ke field `price` secara otomatis (tanpa mengubah field spesifikasi Weight)
   useEffect(() => {
@@ -586,7 +615,9 @@ export default function ProductForm({
                     Kalkulator Jastip (Per KG)
                   </h2>
                   <p className="text-[11px] text-slate-500">
-                    Rumus: max(berat, 0,2 kg) &times; Tarif/kg
+                    {isFoodCategory
+                      ? "Rumus Food: berat (kg) × Tarif/kg (Tanpa min. 200g)"
+                      : "Rumus: max(berat, 0,2 kg) × Tarif/kg"}
                   </p>
                 </div>
               </div>
@@ -604,7 +635,7 @@ export default function ProductForm({
 
             {useAutoCalc && (
               <div className="space-y-4 pt-1">
-                {/* 1. Input Berat Tagihan Jastip (Gram) — Default 1000g (1 kg) */}
+                {/* 1. Input Berat Tagihan Jastip (Gram) — Default 1000g (1 kg) atau 0g untuk Food */}
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <label className="text-xs font-semibold text-slate-700">
@@ -616,7 +647,13 @@ export default function ProductForm({
                       <strong>
                         {chargeableKg.toLocaleString("id-ID")} kg
                       </strong>
-                      {isMinWeightApplied && " (Min 200gr)"}
+                      {isFoodCategory ? (
+                        <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                          Food: Murni per Gram
+                        </span>
+                      ) : (
+                        isMinWeightApplied && " (Min 200gr)"
+                      )}
                     </span>
                   </div>
                   <div className="flex items-center rounded-xl border border-slate-300 bg-white px-3.5 focus-within:border-sky-600">
@@ -626,7 +663,7 @@ export default function ProductForm({
                       step="any"
                       value={weightGrams}
                       onChange={(e) => setWeightGrams(Number(e.target.value))}
-                      placeholder="Contoh: 1000"
+                      placeholder={isFoodCategory ? "0 (isi jika sudah ditimbang)" : "Contoh: 1000"}
                       className="w-full bg-transparent py-2 text-sm font-semibold text-slate-900 focus:outline-none"
                     />
                     <span className="text-xs font-medium text-slate-400">
@@ -634,15 +671,26 @@ export default function ProductForm({
                     </span>
                   </div>
 
-                  {/* Preset Cepat Berat Sesuai Tabel Infografis */}
+                  {/* Preset Cepat Berat Sesuai Kategori */}
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {[
-                      { label: "200 gr", val: 200 },
-                      { label: "500 gr", val: 500 },
-                      { label: "1 kg", val: 1000 },
-                      { label: "2,5 kg", val: 2500 },
-                      { label: "5 kg", val: 5000 },
-                    ].map((preset) => (
+                    {(isFoodCategory
+                      ? [
+                          { label: "0 gr (Belum Tahu)", val: 0 },
+                          { label: "50 gr", val: 50 },
+                          { label: "100 gr", val: 100 },
+                          { label: "150 gr", val: 150 },
+                          { label: "200 gr", val: 200 },
+                          { label: "500 gr", val: 500 },
+                        ]
+                      : [
+                          { label: "0 gr", val: 0 },
+                          { label: "200 gr", val: 200 },
+                          { label: "500 gr", val: 500 },
+                          { label: "1 kg", val: 1000 },
+                          { label: "2,5 kg", val: 2500 },
+                          { label: "5 kg", val: 5000 },
+                        ]
+                    ).map((preset) => (
                       <button
                         key={preset.val}
                         type="button"
@@ -659,18 +707,29 @@ export default function ProductForm({
                   </div>
 
                   <p className="mt-1.5 text-[11px] text-slate-500">
-                    Berat Riil (Spesifikasi{" "}
-                    <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
-                      Weight
-                    </code>
-                    ):{" "}
-                    <strong className="text-slate-700">
-                      {liveActualWeightGrams > 0
-                        ? `${liveActualWeightGrams.toLocaleString("id-ID")} gr`
-                        : "Belum diisi"}
-                    </strong>{" "}
-                    &bull; Default tagihan tas:{" "}
-                    <strong className="text-sky-700">1.000 gr (1 kg)</strong>
+                    {isFoodCategory ? (
+                      <>
+                        Kategori <strong className="text-amber-700">Food / Snack</strong>: Tidak
+                        ada batas min. 200g. Jika berat belum jelas, isi{" "}
+                        <strong className="text-slate-700">0 gr</strong> (ongkir Rp 0, harga =
+                        Yuan &times; Kurs).
+                      </>
+                    ) : (
+                      <>
+                        Berat Riil (Spesifikasi{" "}
+                        <code className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">
+                          Weight
+                        </code>
+                        ):{" "}
+                        <strong className="text-slate-700">
+                          {liveActualWeightGrams > 0
+                            ? `${liveActualWeightGrams.toLocaleString("id-ID")} gr`
+                            : "Belum diisi"}
+                        </strong>{" "}
+                        &bull; Default tagihan tas:{" "}
+                        <strong className="text-sky-700">1.000 gr (1 kg)</strong>
+                      </>
+                    )}
                   </p>
                 </div>
 
