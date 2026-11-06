@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
   Search,
@@ -40,11 +40,144 @@ export default function CatalogClient({
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [sortBy, setSortBy] = useState<SortOption>("oldest");
   const [visibleCount, setVisibleCount] = useState<number>(ITEMS_PER_LOAD);
+  const [highlightedSlug, setHighlightedSlug] = useState<string | null>(null);
 
-  // Reset jumlah produk yang tampil ke 12 setiap kali filter/pencarian/urutan berubah
+  const isRestoringRef = useRef(true);
+  const isInitialMountRef = useRef(true);
+
+  // 1. Pulihkan posisi scroll, filter kategori, pencarian, dan pagination dari sessionStorage
   useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("fp_catalog_scroll_state");
+      if (!raw) {
+        isRestoringRef.current = false;
+        return;
+      }
+
+      const saved = JSON.parse(raw);
+      // Valid jika disimpan kurang dari 3 jam yang lalu
+      if (!saved || Date.now() - (saved.timestamp || 0) > 3 * 60 * 60 * 1000) {
+        sessionStorage.removeItem("fp_catalog_scroll_state");
+        isRestoringRef.current = false;
+        return;
+      }
+
+      isRestoringRef.current = true;
+      if (typeof saved.searchQuery === "string") {
+        setSearchQuery(saved.searchQuery);
+      }
+      if (typeof saved.selectedCategory === "string") {
+        setSelectedCategory(saved.selectedCategory);
+      }
+      if (saved.sortBy) {
+        setSortBy(saved.sortBy);
+      }
+      if (
+        typeof saved.visibleCount === "number" &&
+        saved.visibleCount > ITEMS_PER_LOAD
+      ) {
+        setVisibleCount(saved.visibleCount);
+      }
+      if (saved.lastClickedSlug) {
+        setHighlightedSlug(saved.lastClickedSlug);
+      }
+
+      const targetSlug = saved.lastClickedSlug;
+      const targetScrollY = saved.scrollY;
+
+      const performScroll = () => {
+        if (targetSlug) {
+          const el = document.getElementById(`product-${targetSlug}`);
+          if (el) {
+            el.scrollIntoView({ block: "center", behavior: "auto" });
+            return true;
+          }
+        }
+        if (typeof targetScrollY === "number" && targetScrollY > 0) {
+          window.scrollTo({ top: targetScrollY, behavior: "auto" });
+          return true;
+        }
+        return false;
+      };
+
+      // Eksekusi pemulihan scroll segera setelah render dan beberapa delay pendek
+      requestAnimationFrame(() => {
+        performScroll();
+        const t1 = setTimeout(performScroll, 50);
+        const t2 = setTimeout(performScroll, 150);
+        const t3 = setTimeout(() => {
+          isRestoringRef.current = false;
+        }, 400);
+
+        return () => {
+          clearTimeout(t1);
+          clearTimeout(t2);
+          clearTimeout(t3);
+        };
+      });
+
+      // Hilangkan penanda highlight produk setelah 2.5 detik
+      if (targetSlug) {
+        const timer = setTimeout(() => {
+          setHighlightedSlug(null);
+        }, 2500);
+        return () => clearTimeout(timer);
+      }
+    } catch (e) {
+      console.error("Gagal merestorasi status katalog:", e);
+      isRestoringRef.current = false;
+    }
+  }, []);
+
+  // 2. Reset jumlah produk yang tampil ke 12 HANYA jika pengguna manual mengubah filter/pencarian
+  useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false;
+      return;
+    }
+    if (isRestoringRef.current) {
+      return;
+    }
     setVisibleCount(ITEMS_PER_LOAD);
   }, [searchQuery, selectedCategory, sortBy]);
+
+  // Simpan status katalog sebelum pengguna berpindah ke halaman detail produk
+  const handleProductClick = useCallback(
+    (slug: string) => {
+      try {
+        const state = {
+          searchQuery,
+          selectedCategory,
+          sortBy,
+          visibleCount,
+          scrollY: window.scrollY,
+          lastClickedSlug: slug,
+          timestamp: Date.now(),
+        };
+        sessionStorage.setItem(
+          "fp_catalog_scroll_state",
+          JSON.stringify(state)
+        );
+      } catch {
+        // ignore
+      }
+    },
+    [searchQuery, selectedCategory, sortBy, visibleCount]
+  );
+
+  // Reset katalog secara penuh jika pengguna mengklik Logo FP Catalog di navbar
+  const handleResetCatalog = useCallback(() => {
+    try {
+      sessionStorage.removeItem("fp_catalog_scroll_state");
+    } catch {}
+    isRestoringRef.current = false;
+    setSearchQuery("");
+    setSelectedCategory("all");
+    setSortBy("oldest");
+    setVisibleCount(ITEMS_PER_LOAD);
+    setHighlightedSlug(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   const filteredAndSortedProducts = useMemo(() => {
     const filtered = products.filter((product) => {
@@ -112,7 +245,11 @@ export default function CatalogClient({
       {/* Header Minimalis dengan Brand & Instant Search Bar */}
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/85 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-          <Link href="/" className="flex items-center gap-3 group">
+          <Link
+            href="/"
+            onClick={handleResetCatalog}
+            className="flex items-center gap-3 group"
+          >
             <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl shadow-sm ring-1 ring-slate-200/80 transition-transform group-hover:scale-105">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -250,6 +387,9 @@ export default function CatalogClient({
                 onClick={() => {
                   setSearchQuery("");
                   setSelectedCategory("all");
+                  try {
+                    sessionStorage.removeItem("fp_catalog_scroll_state");
+                  } catch {}
                 }}
                 className="mt-5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
               >
@@ -265,14 +405,23 @@ export default function CatalogClient({
                 const categoryName =
                   product.categories?.name || "Koleksi Umum";
 
+                const isCardHighlighted = highlightedSlug === product.slug;
+
                 return (
                   <article
                     key={product.id}
-                    className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md"
+                    id={`product-${product.slug}`}
+                    className={cn(
+                      "group flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all duration-500 hover:-translate-y-1 hover:shadow-md",
+                      isCardHighlighted
+                        ? "border-sky-500 ring-4 ring-sky-500/25 shadow-md"
+                        : "border-slate-200/90"
+                    )}
                   >
                     {/* Gambar Cover (Aspect Square) */}
                     <Link
                       href={`/product/${product.slug}`}
+                      onClick={() => handleProductClick(product.slug)}
                       className="relative aspect-square w-full overflow-hidden bg-slate-100"
                     >
                       {coverUrl ? (
@@ -297,7 +446,10 @@ export default function CatalogClient({
                     {/* Body Card */}
                     <div className="flex flex-1 flex-col justify-between p-5">
                       <div>
-                        <Link href={`/product/${product.slug}`}>
+                        <Link
+                          href={`/product/${product.slug}`}
+                          onClick={() => handleProductClick(product.slug)}
+                        >
                           <h2 className="line-clamp-2 text-base font-semibold text-slate-900 transition-colors group-hover:text-slate-700">
                             {product.name}
                           </h2>
@@ -310,6 +462,7 @@ export default function CatalogClient({
                       <div className="mt-5 pt-3 border-t border-slate-100">
                         <Link
                           href={`/product/${product.slug}`}
+                          onClick={() => handleProductClick(product.slug)}
                           className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-slate-800"
                         >
                           <span>Lihat Detail</span>
