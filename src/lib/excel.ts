@@ -951,6 +951,44 @@ async function parseXlsxToRows(buffer: ArrayBuffer): Promise<string[][]> {
     }
   }
 
+  // 3. Tangani sel yang di-merge / di-block (e.g. <mergeCell ref="A2:A6"/>)
+  // Nilai pada sel acuan utama (kiri-atas) disalin ke seluruh baris/kolom dalam rentang merge tersebut
+  const mergeElements = doc.getElementsByTagName("mergeCell");
+  for (let mIdx = 0; mIdx < mergeElements.length; mIdx++) {
+    const mergeEl = mergeElements[mIdx];
+    const ref = mergeEl.getAttribute("ref") || "";
+    if (!ref.includes(":")) continue;
+
+    const [startRef, endRef] = ref.split(":");
+    const start = parseCellRef(startRef);
+    const end = parseCellRef(endRef);
+
+    // Ambil nilai master dari sel kiri-atas blok merge
+    const masterValue =
+      tableRows[start.row] && tableRows[start.row][start.col] !== undefined
+        ? tableRows[start.row][start.col]
+        : "";
+
+    if (!masterValue) continue;
+
+    const minRow = Math.min(start.row, end.row);
+    const maxRow = Math.max(start.row, end.row);
+    const minCol = Math.min(start.col, end.col);
+    const maxCol = Math.max(start.col, end.col);
+
+    for (let r = minRow; r <= maxRow; r++) {
+      while (tableRows.length <= r) {
+        tableRows.push([]);
+      }
+      for (let c = minCol; c <= maxCol; c++) {
+        while (tableRows[r].length <= c) {
+          tableRows[r].push("");
+        }
+        tableRows[r][c] = masterValue;
+      }
+    }
+  }
+
   return tableRows.filter((r) => r.some((val) => val !== ""));
 }
 
