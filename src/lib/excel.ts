@@ -1043,15 +1043,65 @@ function parseCsvToRows(text: string): string[][] {
 }
 
 /**
- * Membersihkan format angka (menghapus titik ribuan, Rp, ¥, koma desimal)
+ * Membersihkan format angka secara cerdas dan fleksibel:
+ * - Menangani desimal bertanda koma maupun titik (misal: "19,9" atau "19.9" -> 19.9, "19,90" -> 19.9)
+ * - Menangani simbol mata uang (Rp, ¥, $)
+ * - Menangani pemisah ribuan Indonesia maupun internasional ("220.000", "220,000", "1.250,50")
  */
-function cleanNumber(val: string | number | undefined | null): number {
-  if (typeof val === "number") return val;
+export function cleanNumber(val: string | number | undefined | null): number {
+  if (typeof val === "number") return Number.isFinite(val) ? val : 0;
   if (!val) return 0;
-  const str = String(val)
-    .replace(/[Rp¥$,]/gi, "")
-    .replace(/\s+/g, "")
+
+  let str = String(val)
+    .replace(/[Rp¥$]/gi, "")
+    .replace(/[\s\u00A0\u200B]+/g, "")
     .trim();
+
+  if (!str) return 0;
+
+  // 1. Jika mengandung titik DAN koma sekaligus:
+  if (str.includes(".") && str.includes(",")) {
+    if (str.lastIndexOf(",") > str.lastIndexOf(".")) {
+      // Format Indonesia/Eropa: "1.250,50" -> titik ribuan, koma desimal
+      str = str.replace(/\./g, "").replace(",", ".");
+    } else {
+      // Format Inggris/AS: "1,250.50" -> koma ribuan, titik desimal
+      str = str.replace(/,/g, "");
+    }
+  } else if (str.includes(",")) {
+    // 2. Hanya mengandung tanda koma:
+    const parts = str.split(",");
+    if (parts.length > 2) {
+      // Lebih dari 1 koma -> pasti ribuan: "1,000,000" -> "1000000"
+      str = str.replace(/,/g, "");
+    } else {
+      // Tepat 1 koma: misal "19,9", "19,90", "25,5", "0,25", "1,000"
+      const afterComma = parts[1];
+      // Jika setelah koma ada tepat 3 digit dan sebelum koma bukan angka 0 (misal "220,000" atau "1,000"):
+      if (afterComma.length === 3 && parts[0].length >= 1 && parts[0] !== "0") {
+        str = str.replace(/,/g, "");
+      } else {
+        // Desimal koma: "19,9", "19,90", "12,5", "0,5", "199,5" -> ubah jadi titik desimal
+        str = str.replace(",", ".");
+      }
+    }
+  } else if (str.includes(".")) {
+    // 3. Hanya mengandung tanda titik:
+    const parts = str.split(".");
+    if (parts.length > 2) {
+      // Lebih dari 1 titik -> pasti ribuan: "1.000.000" -> "1000000"
+      str = str.replace(/\./g, "");
+    } else {
+      // Tepat 1 titik: misal "220.000" (ribuan) vs "19.9" atau "0.2" (desimal)
+      const afterDot = parts[1];
+      if (afterDot.length === 3 && parts[0].length >= 1 && parts[0] !== "0") {
+        str = str.replace(/\./g, "");
+      } else {
+        // Desimal titik: "19.9", "19.90", "0.2" -> biarkan
+      }
+    }
+  }
+
   const num = parseFloat(str);
   return Number.isFinite(num) ? num : 0;
 }
