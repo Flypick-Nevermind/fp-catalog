@@ -21,6 +21,7 @@ import {
   FolderInput,
   CheckSquare,
   FileSpreadsheet,
+  Scale,
 } from "lucide-react";
 import { Category, Product } from "@/types/database";
 import {
@@ -30,6 +31,7 @@ import {
   bulkUpdateProductStatusAction,
   bulkUpdateProductCategoryAction,
   bulkDeleteProductsAction,
+  bulkSetProductWeightAction,
 } from "@/app/actions/product";
 import AdminCategoryManager from "@/components/AdminCategoryManager";
 import AdminBulkKursModal from "@/components/AdminBulkKursModal";
@@ -437,6 +439,31 @@ export default function AdminProductTable({
     router.refresh();
   };
 
+  const handleBulkSetZeroWeight = async () => {
+    if (selectedIds.length === 0 || isBulkProcessing) return;
+
+    const confirmed = window.confirm(
+      `Setel berat tagihan menjadi 0 gr untuk ${selectedIds.length} produk yang dipilih?\n\n` +
+        `Harga jual produk akan otomatis dihitung murni dari: Harga Yuan × Pengali Kurs (Harga Riil Yuan tanpa biaya ongkir berat).`
+    );
+    if (!confirmed) return;
+
+    setIsBulkProcessing(true);
+    const res = await bulkSetProductWeightAction(selectedIds, 0);
+    setIsBulkProcessing(false);
+
+    if (!res.success) {
+      alert(res.error || "Gagal mengubah berat produk.");
+      return;
+    }
+
+    showNotice(
+      `Berhasil mengatur ${res.data?.updatedCount || selectedIds.length} produk menjadi berat 0 gr (Harga Riil Yuan).`
+    );
+    setSelectedIds([]);
+    router.refresh();
+  };
+
   return (
     <div className="space-y-8">
       {/* 3 Card Ringkasan Statistik Produk (Dapat Diklik untuk Filter) */}
@@ -731,6 +758,22 @@ export default function AdminProductTable({
                   </button>
                 </div>
 
+                {/* Bulk Set Berat 0 gr (Harga Riil Yuan) */}
+                <button
+                  type="button"
+                  disabled={isBulkProcessing}
+                  onClick={handleBulkSetZeroWeight}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs transition hover:bg-amber-600 disabled:opacity-50"
+                  title="Ubah berat menjadi 0 gr agar harga jual murni harga riil Yuan dikali kurs tanpa ongkir"
+                >
+                  {isBulkProcessing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Scale className="h-3.5 w-3.5" />
+                  )}
+                  Set Berat 0 gr ({selectedIds.length})
+                </button>
+
                 {/* Bulk Export Excel */}
                 <button
                   type="button"
@@ -928,7 +971,14 @@ export default function AdminProductTable({
                           {calcMeta.yuanPrice > 0 && (
                             <div className="mt-0.5 text-[11px] font-medium text-sky-700">
                               &yen;{calcMeta.yuanPrice.toLocaleString("id-ID")}{" "}
-                              &bull; {calcMeta.weightGrams}gr{" "}
+                              &bull;{" "}
+                              {calcMeta.weightGrams === 0 ? (
+                                <span className="rounded bg-amber-50 px-1 py-0.5 font-bold text-amber-700 ring-1 ring-amber-600/20">
+                                  0gr (Riil)
+                                </span>
+                              ) : (
+                                `${calcMeta.weightGrams}gr`
+                              )}{" "}
                               <span className="text-slate-400">
                                 (&times;
                                 {calcMeta.yuanMultiplier.toLocaleString("id-ID")}

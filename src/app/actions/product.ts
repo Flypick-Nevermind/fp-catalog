@@ -756,8 +756,8 @@ export async function bulkUpdateKursAction(
     const customWeightGrams =
       payload.newWeightGrams !== undefined &&
       payload.newWeightGrams !== null &&
-      Number(payload.newWeightGrams) > 0
-        ? Math.round(Number(payload.newWeightGrams))
+      Number(payload.newWeightGrams) >= 0
+        ? Math.max(0, Math.round(Number(payload.newWeightGrams)))
         : null;
 
     const supabase = createSupabaseAdmin();
@@ -1051,6 +1051,99 @@ export async function bulkDeleteProductsAction(
         err instanceof Error
           ? err.message
           : "Gagal menghapus produk secara massal.",
+    };
+  }
+}
+
+/**
+ * Mengubah Berat Tagihan Produk (misal diset 0 gr agar harga jual = murni harga riil Yuan)
+ * secara massal untuk produk yang dipilih.
+ */
+export async function bulkSetProductWeightAction(
+  productIds: string[],
+  weightGrams: number = 0
+): Promise<ActionResponse<{ updatedCount: number }>> {
+  try {
+    const isAdmin = await verifyAdminSession();
+    if (!isAdmin) {
+      return { success: false, error: "Akses ditolak: Sesi admin tidak valid." };
+    }
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return { success: false, error: "Pilih minimal 1 produk." };
+    }
+
+    const safeWeight = Math.max(0, Math.round(Number(weightGrams) || 0));
+    const supabase = createSupabaseAdmin();
+
+    // 1. Ambil data produk yang dipilih beserta kategorinya
+    const { data: products, error: fetchErr } = await supabase
+      .from("products")
+      .select("*, categories (id, name, slug)")
+      .in("id", productIds);
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!products || products.length === 0) {
+      return { success: false, error: "Produk tidak ditemukan." };
+    }
+
+    let updatedCount = 0;
+
+    await Promise.all(
+      products.map(async (prod) => {
+        const meta = extractJastipCalcMeta(prod as unknown as Product);
+        const cat = prod.categories as { name?: string; slug?: string } | null;
+        const isFood = isSub200gCategory(cat?.name || cat?.slug);
+
+        let finalPrice = Number(prod.price) || 0;
+        if (meta.useAutoCalc && meta.yuanPrice > 0) {
+          const calc = computeJastipFinalPrice(
+            {
+              weightGrams: safeWeight,
+              yuanPrice: meta.yuanPrice,
+              yuanMultiplier: meta.yuanMultiplier,
+              ratePerKg: meta.ratePerKg,
+            },
+            { allowSub200g: isFood }
+          );
+          finalPrice = calc.finalPrice;
+        }
+
+        const cleanAttrs = getPublicAttributes(prod.attributes);
+        const actualWeightGrams =
+          meta.actualWeightGrams > 0
+            ? meta.actualWeightGrams
+            : extractSpecWeightGrams(cleanAttrs);
+
+        const { error: updErr } = await supabase
+          .from("products")
+          .update({
+            weight_grams: safeWeight,
+            price: finalPrice,
+            actual_weight_grams: actualWeightGrams,
+            attributes: cleanAttrs,
+          })
+          .eq("id", prod.id);
+
+        if (!updErr) updatedCount++;
+      })
+    );
+
+    revalidatePath("/", "layout");
+    revalidatePath("/admin", "layout");
+
+    return {
+      success: true,
+      data: { updatedCount },
+    };
+  } catch (err) {
+    console.error("bulkSetProductWeightAction error:", err);
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Gagal mengubah berat produk secara massal.",
     };
   }
 }

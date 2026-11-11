@@ -683,7 +683,7 @@ export default function ProductForm({
                           { label: "500 gr", val: 500 },
                         ]
                       : [
-                          { label: "0 gr", val: 0 },
+                          { label: "0 gr (Harga Riil)", val: 0 },
                           { label: "200 gr", val: 200 },
                           { label: "500 gr", val: 500 },
                           { label: "1 kg", val: 1000 },
@@ -707,7 +707,11 @@ export default function ProductForm({
                   </div>
 
                   <p className="mt-1.5 text-[11px] text-slate-500">
-                    {isFoodCategory ? (
+                    {weightGrams === 0 ? (
+                      <span className="font-semibold text-amber-800">
+                        ⚡ Berat 0 gr: Ongkir Rp 0. Harga jual dihitung murni Harga Yuan &times; Kurs (Harga Riil).
+                      </span>
+                    ) : isFoodCategory ? (
                       <>
                         Kategori <strong className="text-amber-700">Food / Snack</strong>: Tidak
                         ada batas min. 200g. Jika berat belum jelas, isi{" "}

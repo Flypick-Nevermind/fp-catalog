@@ -158,7 +158,7 @@ export default function AdminBulkKursModal({
         className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900"
       >
         <Calculator className="h-4 w-4 text-sky-600" />
-        <span>Update Kurs</span>
+        <span>Update Kurs &amp; Berat</span>
       </button>
 
       {isOpen && (
@@ -207,6 +207,28 @@ export default function AdminBulkKursModal({
                     <span>{successMsg}</span>
                   </div>
                 )}
+
+                {/* Shortcut Cepat: Set Berat 0 gr (Mode Harga Riil Yuan) */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs">
+                  <div className="flex items-center gap-2 text-amber-900">
+                    <span className="rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-bold text-white uppercase tracking-wider">
+                      Mode Harga Riil
+                    </span>
+                    <span className="font-medium text-amber-800">
+                      Tampilkan harga produk murni dari <strong>Harga Yuan &times; Kurs</strong> (tanpa biaya ongkir berat)?
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOverrideWeight(true);
+                      setNewWeightGrams(0);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-2xs transition hover:bg-amber-700 active:scale-95"
+                  >
+                    <span>⚡ Set Berat 0 gr (Harga Riil)</span>
+                  </button>
+                </div>
 
                 {/* Form Pengaturan Kurs & Filter */}
                 <div className="grid grid-cols-1 gap-3.5 rounded-2xl border border-sky-200/80 bg-sky-50/40 p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -267,7 +289,7 @@ export default function AdminBulkKursModal({
                     </select>
                   </div>
 
-                  {/* 3. Opsional: Samakan Berat Tagihan (Default 1000g / 1kg) */}
+                  {/* 3. Opsional: Samakan Berat Tagihan (0 gr = Harga Riil Yuan) */}
                   <div>
                     <div className="mb-1 flex items-center justify-between">
                       <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-semibold text-slate-700">
@@ -280,13 +302,31 @@ export default function AdminBulkKursModal({
                         <span>Set Berat Tagihan</span>
                       </label>
                       {overrideWeight && (
-                        <button
-                          type="button"
-                          onClick={() => setNewWeightGrams(1000)}
-                          className="rounded bg-sky-600 px-1.5 py-0.5 text-[10px] font-semibold text-white"
-                        >
-                          1 kg
-                        </button>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setNewWeightGrams(0)}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold transition ${
+                              newWeightGrams === 0
+                                ? "bg-amber-600 text-white shadow-2xs"
+                                : "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                            }`}
+                            title="Set berat 0 gr agar harga jual murni harga riil Yuan tanpa ongkir"
+                          >
+                            0 gr (Riil)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewWeightGrams(1000)}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold transition ${
+                              newWeightGrams === 1000
+                                ? "bg-sky-600 text-white shadow-2xs"
+                                : "bg-sky-100 text-sky-800 hover:bg-sky-200"
+                            }`}
+                          >
+                            1 kg
+                          </button>
+                        </div>
                       )}
                     </div>
                     <div
@@ -298,19 +338,28 @@ export default function AdminBulkKursModal({
                     >
                       <input
                         type="number"
-                        min={200}
+                        min={0}
                         step="any"
                         disabled={!overrideWeight}
                         value={newWeightGrams}
-                        onChange={(e) =>
-                          setNewWeightGrams(Number(e.target.value) || 1000)
-                        }
+                        onChange={(e) => {
+                          const val =
+                            e.target.value === "" ? 0 : Number(e.target.value);
+                          setNewWeightGrams(
+                            Number.isFinite(val) ? Math.max(0, val) : 0
+                          );
+                        }}
                         className="w-full bg-transparent py-2 text-sm font-semibold text-slate-900 focus:outline-none disabled:cursor-not-allowed"
                       />
                       <span className="text-xs font-medium text-slate-400">
                         gr
                       </span>
                     </div>
+                    {overrideWeight && newWeightGrams === 0 && (
+                      <p className="mt-1 text-[10px] font-semibold text-amber-700">
+                        ⚡ Berat 0 gr: Ongkir Rp 0 (Harga = Yuan &times; Kurs)
+                      </p>
+                    )}
                   </div>
 
                   {/* 4. Opsional: Ubah Tarif Jastip / KG */}
@@ -436,6 +485,11 @@ export default function AdminBulkKursModal({
                                 &bull;{" "}
                                 <span className="font-medium text-slate-800">
                                   Tagihan: {row.targetWeightGrams}gr
+                                  {row.targetWeightGrams === 0 && (
+                                    <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
+                                      Riil
+                                    </span>
+                                  )}
                                 </span>
                               </td>
                               <td className="px-3 py-2.5 text-right whitespace-nowrap text-slate-500">
