@@ -360,13 +360,17 @@ export default async function ProductDetailPage({
                           Tanpa Foto
                         </div>
                       )}
-                      <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-800 shadow-sm backdrop-blur-sm">
-                        {relCategory}
-                      </span>
                     </Link>
 
                     <div className="flex flex-1 flex-col justify-between p-4">
                       <div>
+                        {/* Tag Kategori (di bawah gambar agar tidak menutupi logo pada foto produk) */}
+                        <div className="mb-1.5">
+                          <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200/80">
+                            {relCategory}
+                          </span>
+                        </div>
+
                         <Link href={`/product/${rel.slug}`}>
                           <h3 className="line-clamp-2 text-sm font-semibold text-slate-900 group-hover:text-slate-700">
                             {rel.name}

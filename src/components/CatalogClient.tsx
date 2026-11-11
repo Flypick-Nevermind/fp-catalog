@@ -16,14 +16,27 @@ import { Category, Product } from "@/types/database";
 import { formatIDR, cn } from "@/lib/utils";
 
 type SortOption =
-  | "oldest"
+  | "random"
   | "newest"
+  | "oldest"
   | "price-asc"
   | "price-desc"
   | "name-asc"
   | "name-desc";
 
 const ITEMS_PER_LOAD = 12; // Kelipatan 2, 3, dan 4 agar baris grid selalu rata di semua ukuran layar
+
+/**
+ * Menghasilkan hash skor deterministik untuk produk berdasarkan seed acak.
+ * Memastikan urutan acak tetap stabil selama sesi berlangsung dan saat kembali dari detail produk.
+ */
+function getProductRandomScore(id: string, seed: number): number {
+  let hash = seed;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
 
 interface CatalogClientProps {
   products: Product[];
@@ -38,9 +51,10 @@ export default function CatalogClient({
 }: CatalogClientProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<SortOption>("oldest");
+  const [sortBy, setSortBy] = useState<SortOption>("random");
   const [visibleCount, setVisibleCount] = useState<number>(ITEMS_PER_LOAD);
   const [highlightedSlug, setHighlightedSlug] = useState<string | null>(null);
+  const [randomSeed, setRandomSeed] = useState<number | null>(null);
 
   const isRestoringRef = useRef(true);
   const isInitialMountRef = useRef(true);
@@ -51,6 +65,7 @@ export default function CatalogClient({
       const raw = sessionStorage.getItem("fp_catalog_scroll_state");
       if (!raw) {
         isRestoringRef.current = false;
+        setRandomSeed(Math.floor(Math.random() * 1000000) + 1);
         return;
       }
 
@@ -59,6 +74,7 @@ export default function CatalogClient({
       if (!saved || Date.now() - (saved.timestamp || 0) > 3 * 60 * 60 * 1000) {
         sessionStorage.removeItem("fp_catalog_scroll_state");
         isRestoringRef.current = false;
+        setRandomSeed(Math.floor(Math.random() * 1000000) + 1);
         return;
       }
 
@@ -71,6 +87,11 @@ export default function CatalogClient({
       }
       if (saved.sortBy) {
         setSortBy(saved.sortBy);
+      }
+      if (saved.randomSeed !== undefined && saved.randomSeed !== null) {
+        setRandomSeed(saved.randomSeed);
+      } else {
+        setRandomSeed(Math.floor(Math.random() * 1000000) + 1);
       }
       if (
         typeof saved.visibleCount === "number" &&
@@ -152,6 +173,7 @@ export default function CatalogClient({
           visibleCount,
           scrollY: window.scrollY,
           lastClickedSlug: slug,
+          randomSeed,
           timestamp: Date.now(),
         };
         sessionStorage.setItem(
@@ -162,7 +184,7 @@ export default function CatalogClient({
         // ignore
       }
     },
-    [searchQuery, selectedCategory, sortBy, visibleCount]
+    [searchQuery, selectedCategory, sortBy, visibleCount, randomSeed]
   );
 
   // Reset katalog secara penuh jika pengguna mengklik Logo FP Catalog di navbar
@@ -173,7 +195,8 @@ export default function CatalogClient({
     isRestoringRef.current = false;
     setSearchQuery("");
     setSelectedCategory("all");
-    setSortBy("oldest");
+    setSortBy("random");
+    setRandomSeed(Math.floor(Math.random() * 1000000) + 1);
     setVisibleCount(ITEMS_PER_LOAD);
     setHighlightedSlug(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -202,6 +225,12 @@ export default function CatalogClient({
 
     return [...filtered].sort((a, b) => {
       switch (sortBy) {
+        case "random": {
+          if (randomSeed === null) return 0;
+          const scoreA = getProductRandomScore(a.id, randomSeed);
+          const scoreB = getProductRandomScore(b.id, randomSeed);
+          return scoreA !== scoreB ? scoreA - scoreB : a.id.localeCompare(b.id);
+        }
         case "newest": {
           const timeDiff =
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -224,12 +253,26 @@ export default function CatalogClient({
           return 0;
       }
     });
-  }, [products, selectedCategory, searchQuery, sortBy]);
+  }, [products, selectedCategory, searchQuery, sortBy, randomSeed]);
 
   const totalFiltered = filteredAndSortedProducts.length;
   const visibleProducts = filteredAndSortedProducts.slice(0, visibleCount);
   const hasMore = visibleCount < totalFiltered;
   const remainingCount = Math.max(0, totalFiltered - visibleCount);
+
+  // Hitung total produk per kategori untuk label filter
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    products.forEach((p) => {
+      if (p.category_id) {
+        counts[p.category_id] = (counts[p.category_id] || 0) + 1;
+      }
+      if (p.categories?.slug) {
+        counts[p.categories.slug] = (counts[p.categories.slug] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [products]);
 
   const getCoverImage = (product: Product): string | null => {
     const imgs = product.product_images;
@@ -329,6 +372,11 @@ export default function CatalogClient({
             </button>
             {categories.map((cat) => {
               const isSelected = selectedCategory === cat.id;
+              const catProductCount =
+                categoryCounts[cat.id] ||
+                (cat.slug ? categoryCounts[cat.slug] : 0) ||
+                0;
+
               return (
                 <button
                   key={cat.id}
@@ -341,7 +389,7 @@ export default function CatalogClient({
                       : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"
                   )}
                 >
-                  {cat.name}
+                  {cat.name} ({catProductCount})
                 </button>
               );
             })}
@@ -353,12 +401,19 @@ export default function CatalogClient({
               <ArrowUpDown className="pointer-events-none absolute left-3.5 h-4 w-4 text-slate-500" />
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
+                onChange={(e) => {
+                  const val = e.target.value as SortOption;
+                  if (val === "random") {
+                    setRandomSeed(Math.floor(Math.random() * 1000000) + 1);
+                  }
+                  setSortBy(val);
+                }}
                 aria-label="Urutkan produk"
                 className="cursor-pointer rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 focus:border-slate-900 focus:outline-none"
               >
-                <option value="oldest">Urutan: Terlama – Terbaru</option>
+                <option value="random">Rekomendasi Untuk Kamu</option>
                 <option value="newest">Urutan: Terbaru – Terlama</option>
+                <option value="oldest">Urutan: Terlama – Terbaru</option>
                 <option value="price-asc">Harga: Termurah – Termahal</option>
                 <option value="price-desc">Harga: Termahal – Termurah</option>
                 <option value="name-asc">Nama: A – Z</option>
@@ -436,16 +491,18 @@ export default function CatalogClient({
                           Tanpa Foto
                         </div>
                       )}
-
-                      {/* Badge Kategori */}
-                      <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-800 shadow-sm backdrop-blur-sm">
-                        {categoryName}
-                      </span>
                     </Link>
 
                     {/* Body Card */}
                     <div className="flex flex-1 flex-col justify-between p-5">
                       <div>
+                        {/* Tag Kategori (di bawah gambar agar tidak menutupi logo pada foto produk) */}
+                        <div className="mb-2">
+                          <span className="inline-flex items-center rounded-md bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80">
+                            {categoryName}
+                          </span>
+                        </div>
+
                         <Link
                           href={`/product/${product.slug}`}
                           onClick={() => handleProductClick(product.slug)}
