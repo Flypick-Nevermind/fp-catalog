@@ -9,6 +9,10 @@ import {
   CheckCircle2,
   Layers,
   Sparkles,
+  ShieldCheck,
+  MessageCircle,
+  PackageCheck,
+  ChevronRight,
 } from "lucide-react";
 import { supabasePublic } from "@/lib/supabase";
 import ProductGallery from "@/components/ProductGallery";
@@ -217,7 +221,27 @@ export default async function ProductDetailPage({
       </header>
 
       {/* Konten Detail Produk */}
-      <main className="mx-auto max-w-7xl px-4 pt-8 pb-24 sm:px-6 sm:py-8 lg:px-8">
+      <main className="mx-auto max-w-7xl px-4 pt-6 pb-24 sm:px-6 sm:py-8 lg:px-8">
+        {/* Breadcrumb Navigasi */}
+        <nav
+          aria-label="Breadcrumb"
+          className="mb-6 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500"
+        >
+          <Link href="/" className="transition hover:text-slate-900">
+            Beranda
+          </Link>
+          <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+          {product.categories?.name && (
+            <>
+              <span className="text-slate-600">{product.categories.name}</span>
+              <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+            </>
+          )}
+          <span className="line-clamp-1 font-semibold text-slate-900">
+            {product.name}
+          </span>
+        </nav>
+
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-12">
           {/* Kolom Kiri (Galeri Interaktif Multi-Foto) */}
           <div className="lg:col-span-6">
@@ -251,14 +275,23 @@ export default async function ProductDetailPage({
               />
             </div>
 
-            {/* Nama & Harga */}
-            <div className="border-b border-slate-200 pb-6">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            {/* Nama & Kartu Harga */}
+            <div className="space-y-4">
+              <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">
                 {product.name}
               </h1>
-              <p className="mt-3 text-3xl font-extrabold text-slate-900">
-                {formatIDR(Number(product.price))}
-              </p>
+
+              <div className="rounded-2xl border border-slate-200/90 bg-gradient-to-br from-slate-50 to-slate-100/70 p-4 sm:p-5">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Harga Katalog
+                </p>
+                <p className="mt-1 text-3xl font-extrabold tracking-tight text-slate-900">
+                  {formatIDR(Number(product.price))}
+                </p>
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Konfirmasi ketersediaan stok &amp; detail pengiriman langsung dengan admin via WhatsApp.
+                </p>
+              </div>
             </div>
 
             {/* Tombol Aksi: Pesan Langsung & Titip Multi-Produk */}
@@ -272,6 +305,28 @@ export default async function ProductDetailPage({
                 categoryName: product.categories?.name,
               }}
             />
+
+            {/* Jaminan Layanan (3 Badges) */}
+            <div className="grid grid-cols-3 gap-2.5 pt-1">
+              <div className="flex flex-col items-center rounded-xl border border-slate-200/80 bg-white p-3 text-center">
+                <ShieldCheck className="mb-1.5 h-4 w-4 text-emerald-600" />
+                <span className="text-[11px] font-semibold text-slate-700">
+                  Terpercaya
+                </span>
+              </div>
+              <div className="flex flex-col items-center rounded-xl border border-slate-200/80 bg-white p-3 text-center">
+                <MessageCircle className="mb-1.5 h-4 w-4 text-sky-600" />
+                <span className="text-[11px] font-semibold text-slate-700">
+                  Respon Cepat
+                </span>
+              </div>
+              <div className="flex flex-col items-center rounded-xl border border-slate-200/80 bg-white p-3 text-center">
+                <PackageCheck className="mb-1.5 h-4 w-4 text-amber-600" />
+                <span className="text-[11px] font-semibold text-slate-700">
+                  Packing Aman
+                </span>
+              </div>
+            </div>
 
             {/* Dynamic Specs Table (dari JSONB attributes) */}
             {attributes.length > 0 && (
