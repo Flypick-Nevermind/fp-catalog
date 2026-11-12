@@ -9,8 +9,8 @@ import {
   PackageOpen,
   Sparkles,
   ArrowUpDown,
-  ChevronDown,
   ChevronUp,
+  Loader2,
   ShoppingBag,
   Plus,
   Check,
@@ -88,6 +88,7 @@ export default function CatalogClient({
   const isRestoringRef = useRef(true);
   const isInitialMountRef = useRef(true);
   const catalogContentRef = useRef<HTMLDivElement>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   // 1. Pulihkan posisi scroll, filter kategori, harga, pencarian, dan pagination dari sessionStorage
   useEffect(() => {
@@ -385,7 +386,29 @@ export default function CatalogClient({
   const totalFiltered = filteredAndSortedProducts.length;
   const visibleProducts = filteredAndSortedProducts.slice(0, visibleCount);
   const hasMore = visibleCount < totalFiltered;
-  const remainingCount = Math.max(0, totalFiltered - visibleCount);
+
+  // 3. Infinite Scroll otomatis menggunakan IntersectionObserver saat mendekati akhir daftar
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || !hasMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting && !isRestoringRef.current) {
+          setVisibleCount((prev) =>
+            Math.min(totalFiltered, prev + ITEMS_PER_LOAD)
+          );
+        }
+      },
+      {
+        rootMargin: "400px 0px",
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, totalFiltered, visibleCount]);
 
   // Hitung total produk per kategori untuk label filter
   const categoryCounts = useMemo(() => {
@@ -1121,8 +1144,11 @@ export default function CatalogClient({
                   })}
                 </div>
 
-                {/* Bagian Load More & Indikator Jumlah Produk */}
-                <div className="mt-10 flex flex-col items-center justify-center gap-4">
+                {/* Sentinel Infinite Scroll & Indikator Jumlah Produk */}
+                <div
+                  ref={loadMoreSentinelRef}
+                  className="mt-10 flex flex-col items-center justify-center gap-3.5"
+                >
                   <p className="text-xs font-medium text-slate-500">
                     Menampilkan{" "}
                     <span className="font-bold text-slate-900">
@@ -1151,32 +1177,27 @@ export default function CatalogClient({
                   </div>
 
                   {hasMore ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setVisibleCount((prev) => prev + ITEMS_PER_LOAD)
-                      }
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-6 py-3 text-xs font-bold text-slate-900 shadow-2xs transition hover:border-slate-900 hover:bg-slate-900 hover:text-white active:scale-[0.99]"
-                    >
-                      <span>
-                        Muat Lebih Banyak (
-                        {Math.min(ITEMS_PER_LOAD, remainingCount)} Produk Lagi)
-                      </span>
-                      <ChevronDown className="h-4 w-4" />
-                    </button>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 shadow-2xs">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-700" />
+                      <span>Memuat produk lainnya secara otomatis...</span>
+                    </div>
                   ) : (
                     totalFiltered > ITEMS_PER_LOAD && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setVisibleCount(ITEMS_PER_LOAD);
-                          scrollToCatalogTop();
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
-                      >
-                        <span>Tampilkan Lebih Sedikit</span>
-                        <ChevronUp className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex flex-col items-center gap-2.5 pt-1">
+                        <span className="text-xs font-medium text-slate-400">
+                          Semua {totalFiltered} produk telah ditampilkan
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.scrollTo({ top: 0, behavior: "smooth" })
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                          <span>Kembali ke Atas</span>
+                        </button>
+                      </div>
                     )
                   )}
                 </div>
