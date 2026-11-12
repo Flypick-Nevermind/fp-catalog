@@ -84,8 +84,6 @@ function mapProductToFormValues(product: Product): ProductFormValues {
       })) || [];
 
   const publicAttrs = getPublicAttributes(product.attributes);
-  const attrs =
-    publicAttrs.length > 0 ? publicAttrs : [{ key: "Weight", value: "" }];
 
   const calcMeta = extractJastipCalcMeta(product);
 
@@ -97,7 +95,7 @@ function mapProductToFormValues(product: Product): ProductFormValues {
     price: Number(product.price ?? 44000),
     status: product.status || "published",
     description: product.description || "",
-    attributes: attrs,
+    attributes: publicAttrs,
     images: sortedImages,
   };
 }
