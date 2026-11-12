@@ -11,9 +11,13 @@ import {
   ArrowUpDown,
   ChevronDown,
   ChevronUp,
+  ShoppingBag,
+  Plus,
+  Check,
 } from "lucide-react";
 import { Category, Product } from "@/types/database";
 import { formatIDR, cn } from "@/lib/utils";
+import { useInquiryCart } from "@/context/InquiryCartContext";
 
 type SortOption =
   | "random"
@@ -49,6 +53,9 @@ export default function CatalogClient({
   categories,
   storeName = process.env.NEXT_PUBLIC_STORE_NAME || "FP Catalog",
 }: CatalogClientProps) {
+  const { addItem, isInCart, setIsDrawerOpen, totalCount, items: cartItems } =
+    useInquiryCart();
+
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [sortBy, setSortBy] = useState<SortOption>("random");
@@ -205,9 +212,12 @@ export default function CatalogClient({
   const filteredAndSortedProducts = useMemo(() => {
     const filtered = products.filter((product) => {
       const matchesCategory =
-        selectedCategory === "all" ||
-        product.category_id === selectedCategory ||
-        product.categories?.slug === selectedCategory;
+        selectedCategory === "all"
+          ? true
+          : selectedCategory === "inquiry_cart"
+          ? cartItems.some((ci) => ci.id === product.id)
+          : product.category_id === selectedCategory ||
+            product.categories?.slug === selectedCategory;
 
       const query = searchQuery.trim().toLowerCase();
       if (!query) return matchesCategory;
@@ -253,7 +263,7 @@ export default function CatalogClient({
           return 0;
       }
     });
-  }, [products, selectedCategory, searchQuery, sortBy, randomSeed]);
+  }, [products, selectedCategory, searchQuery, sortBy, randomSeed, cartItems]);
 
   const totalFiltered = filteredAndSortedProducts.length;
   const visibleProducts = filteredAndSortedProducts.slice(0, visibleCount);
@@ -311,24 +321,43 @@ export default function CatalogClient({
             </div>
           </Link>
 
-          {/* Search Bar Instan */}
-          <div className="relative w-full sm:max-w-md">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari nama produk, kategori, atau bahan..."
-              className="w-full rounded-xl border border-slate-200 bg-slate-100/80 py-2.5 pl-10 pr-9 text-sm text-slate-900 placeholder:text-slate-400 transition focus:border-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-            />
-            {searchQuery && (
+          {/* Search Bar Instan & Tombol Titipan */}
+          <div className="flex items-center gap-2.5 w-full sm:max-w-md">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Cari nama produk, kategori, atau bahan..."
+                className="w-full rounded-xl border border-slate-200 bg-slate-100/80 py-2.5 pl-10 pr-9 text-sm text-slate-900 placeholder:text-slate-400 transition focus:border-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Bersihkan pencarian"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-200/60 hover:text-slate-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {totalCount > 0 && (
               <button
                 type="button"
-                onClick={() => setSearchQuery("")}
-                aria-label="Bersihkan pencarian"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-200/60 hover:text-slate-700"
+                onClick={() => setIsDrawerOpen(true)}
+                className="flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-800 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 active:scale-95"
+                title="Buka Daftar Titipan"
               >
-                <X className="h-4 w-4" />
+                <div className="relative">
+                  <ShoppingBag className="h-4 w-4 text-emerald-600" />
+                  <span className="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-extrabold text-white">
+                    {totalCount}
+                  </span>
+                </div>
+                <span className="hidden sm:inline">Titipan</span>
               </button>
             )}
           </div>
@@ -370,6 +399,21 @@ export default function CatalogClient({
             >
               Semua Produk ({products.length})
             </button>
+            {totalCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedCategory("inquiry_cart")}
+                className={cn(
+                  "shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all flex items-center gap-1.5",
+                  selectedCategory === "inquiry_cart"
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                )}
+              >
+                <ShoppingBag className="h-3.5 w-3.5" />
+                <span>Titipan Saya ({totalCount})</span>
+              </button>
+            )}
             {categories.map((cat) => {
               const isSelected = selectedCategory === cat.id;
               const catProductCount =
@@ -461,6 +505,7 @@ export default function CatalogClient({
                   product.categories?.name || "Koleksi Umum";
 
                 const isCardHighlighted = highlightedSlug === product.slug;
+                const inCart = isInCart(product.id);
 
                 return (
                   <article
@@ -516,14 +561,58 @@ export default function CatalogClient({
                         </p>
                       </div>
 
-                      <div className="mt-5 pt-3 border-t border-slate-100">
+                      {/* Tombol Aksi: + Titip & Detail */}
+                      <div className="mt-5 pt-3 border-t border-slate-100 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (inCart) {
+                              setIsDrawerOpen(true);
+                            } else {
+                              addItem({
+                                id: product.id,
+                                slug: product.slug,
+                                name: product.name,
+                                price: Number(product.price),
+                                coverUrl,
+                                categoryName,
+                              });
+                            }
+                          }}
+                          className={cn(
+                            "flex-1 flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-semibold transition-all active:scale-95",
+                            inCart
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100"
+                              : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+                          )}
+                          title={
+                            inCart
+                              ? "Sudah di daftar titipan (klik untuk buka)"
+                              : "Tambahkan ke daftar titipan"
+                          }
+                        >
+                          {inCart ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 text-emerald-600" />
+                              <span>Dititip</span>
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-3.5 w-3.5 text-slate-600" />
+                              <span>Titip</span>
+                            </>
+                          )}
+                        </button>
+
                         <Link
                           href={`/product/${product.slug}`}
                           onClick={() => handleProductClick(product.slug)}
-                          className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+                          className="flex-1 flex items-center justify-center gap-1 rounded-xl bg-slate-900 px-3 py-2.5 text-xs font-semibold text-white transition hover:bg-slate-800"
                         >
-                          <span>Lihat Detail</span>
-                          <ArrowUpRight className="h-4 w-4" />
+                          <span>Detail</span>
+                          <ArrowUpRight className="h-3.5 w-3.5" />
                         </Link>
                       </div>
                     </div>

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { supabasePublic } from "@/lib/supabase";
 import ProductGallery from "@/components/ProductGallery";
-import WhatsAppButton from "@/components/WhatsAppButton";
+import ProductDetailActions from "@/components/ProductDetailActions";
 import ShareProductButton from "@/components/ShareProductButton";
 import BackToCatalogButton from "@/components/BackToCatalogButton";
 import { Product, ProductAttribute } from "@/types/database";
@@ -261,10 +261,16 @@ export default async function ProductDetailPage({
               </p>
             </div>
 
-            {/* Tombol CTA WhatsApp (Inline & Floating/Sticky) */}
-            <WhatsAppButton
-              productName={product.name}
-              productSlug={product.slug}
+            {/* Tombol Aksi: Pesan Langsung & Titip Multi-Produk */}
+            <ProductDetailActions
+              product={{
+                id: product.id,
+                slug: product.slug,
+                name: product.name,
+                price: Number(product.price),
+                coverUrl: getPrimaryImageUrl(product),
+                categoryName: product.categories?.name,
+              }}
             />
 
             {/* Dynamic Specs Table (dari JSONB attributes) */}
