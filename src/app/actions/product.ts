@@ -150,7 +150,7 @@ export async function saveProductAction(
         ? Math.round(data.actual_weight_grams)
         : extractSpecWeightGrams(cleanAttributes);
     const calcWeightGrams =
-      typeof data.weight_grams === "number" && data.weight_grams > 0
+      typeof data.weight_grams === "number" && data.weight_grams >= 0
         ? Math.round(data.weight_grams)
         : DEFAULT_CALC_WEIGHT_GRAMS;
     const yuanPrice = Number(data.yuan_price) || 0;
@@ -159,7 +159,7 @@ export async function saveProductAction(
         ? Number(data.yuan_multiplier)
         : DEFAULT_YUAN_MULTIPLIER;
     const ratePerKg =
-      Number(data.rate_per_kg) > 0
+      typeof data.rate_per_kg === "number" && data.rate_per_kg >= 0
         ? Number(data.rate_per_kg)
         : DEFAULT_RATE_PER_KG;
 
@@ -1115,7 +1115,7 @@ export async function bulkSetProductWeightAction(
             ? meta.actualWeightGrams
             : extractSpecWeightGrams(cleanAttrs);
 
-        const { error: updErr } = await supabase
+        let { error: updErr } = await supabase
           .from("products")
           .update({
             weight_grams: safeWeight,
@@ -1124,6 +1124,31 @@ export async function bulkSetProductWeightAction(
             attributes: cleanAttrs,
           })
           .eq("id", prod.id);
+
+        if (
+          updErr &&
+          (updErr.code === "PGRST204" ||
+            updErr.code === "42703" ||
+            updErr.message.includes("column"))
+        ) {
+          const fallbackAttrs = attachJastipCalcMeta(cleanAttrs, {
+            useAutoCalc: meta.useAutoCalc,
+            actualWeightGrams,
+            weightGrams: safeWeight,
+            yuanPrice: meta.yuanPrice,
+            yuanMultiplier: meta.yuanMultiplier,
+            ratePerKg: meta.ratePerKg,
+            sourceUrl: meta.sourceUrl,
+          });
+          const retry = await supabase
+            .from("products")
+            .update({
+              price: finalPrice,
+              attributes: fallbackAttrs,
+            })
+            .eq("id", prod.id);
+          updErr = retry.error;
+        }
 
         if (!updErr) updatedCount++;
       })

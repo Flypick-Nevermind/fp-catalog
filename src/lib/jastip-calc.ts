@@ -314,6 +314,24 @@ export function attachJastipCalcMeta(
   meta: JastipCalcMeta
 ): ProductAttribute[] {
   const cleaned = getPublicAttributes(publicAttributes);
+  const parsedWeight = Number(meta.weightGrams);
+  const safeWeightGrams =
+    meta.weightGrams !== undefined &&
+    meta.weightGrams !== null &&
+    Number.isFinite(parsedWeight) &&
+    parsedWeight >= 0
+      ? Math.round(parsedWeight)
+      : DEFAULT_CALC_WEIGHT_GRAMS;
+
+  const parsedRate = Number(meta.ratePerKg);
+  const safeRatePerKg =
+    meta.ratePerKg !== undefined &&
+    meta.ratePerKg !== null &&
+    Number.isFinite(parsedRate) &&
+    parsedRate >= 0
+      ? parsedRate
+      : DEFAULT_RATE_PER_KG;
+
   return [
     ...cleaned,
     {
@@ -321,10 +339,10 @@ export function attachJastipCalcMeta(
       value: JSON.stringify({
         useAutoCalc: Boolean(meta.useAutoCalc),
         actualWeightGrams: Number(meta.actualWeightGrams) || 0,
-        weightGrams: Number(meta.weightGrams) || DEFAULT_CALC_WEIGHT_GRAMS,
+        weightGrams: safeWeightGrams,
         yuanPrice: Number(meta.yuanPrice) || 0,
         yuanMultiplier: Number(meta.yuanMultiplier) || DEFAULT_YUAN_MULTIPLIER,
-        ratePerKg: Number(meta.ratePerKg) || DEFAULT_RATE_PER_KG,
+        ratePerKg: safeRatePerKg,
         sourceUrl: (meta.sourceUrl || "").trim(),
       }),
     },
