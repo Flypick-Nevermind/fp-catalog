@@ -22,6 +22,7 @@ import {
   CheckSquare,
   FileSpreadsheet,
   Scale,
+  Filter,
 } from "lucide-react";
 import { Category, Product } from "@/types/database";
 import {
@@ -49,6 +50,7 @@ interface SavedTableState {
   currentPage: number;
   pageSize: number;
   statusFilter: StatusFilter;
+  categoryFilter?: string;
   searchQuery: string;
 }
 
@@ -77,9 +79,20 @@ export default function AdminProductTable({
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
-  // State Filter Status, Pencarian & Pagination (diinisialisasi dari sessionStorage agar tidak reset ke page 1)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
-    if (typeof window === "undefined") return "all";
+  // State Filter Status, Kategori, Pencarian & Pagination (default statis agar cocok dengan SSR; dipulihkan di useEffect)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [isStateRestored, setIsStateRestored] = useState<boolean>(false);
+
+  const [highlightedProductId, setHighlightedProductId] = useState<
+    string | null
+  >(null);
+
+  // Pulihkan state filter & pagination dari sessionStorage setelah hydration selesai
+  useEffect(() => {
     try {
       const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
       if (saved) {
@@ -89,73 +102,37 @@ export default function AdminProductTable({
           parsed.statusFilter === "published" ||
           parsed.statusFilter === "draft"
         ) {
-          return parsed.statusFilter;
+          setStatusFilter(parsed.statusFilter);
         }
-      }
-    } catch {
-      // ignore
-    }
-    return "all";
-  });
-
-  const [searchQuery, setSearchQuery] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    try {
-      const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<SavedTableState>;
-        return parsed.searchQuery || "";
-      }
-    } catch {
-      // ignore
-    }
-    return "";
-  });
-
-  const [pageSize, setPageSize] = useState<number>(() => {
-    if (typeof window === "undefined") return 10;
-    try {
-      const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<SavedTableState>;
+        if (typeof parsed.categoryFilter === "string" && parsed.categoryFilter) {
+          setCategoryFilter(parsed.categoryFilter);
+        }
+        if (typeof parsed.searchQuery === "string") {
+          setSearchQuery(parsed.searchQuery);
+        }
         if (parsed.pageSize && [10, 20, 50].includes(parsed.pageSize)) {
-          return parsed.pageSize;
+          setPageSize(parsed.pageSize);
         }
-      }
-    } catch {
-      // ignore
-    }
-    return 10;
-  });
-
-  const [currentPage, setCurrentPage] = useState<number>(() => {
-    if (typeof window === "undefined") return 1;
-    try {
-      const saved = sessionStorage.getItem(ADMIN_TABLE_STATE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<SavedTableState>;
         if (parsed.currentPage && parsed.currentPage >= 1) {
-          return parsed.currentPage;
+          setCurrentPage(parsed.currentPage);
         }
       }
     } catch {
       // ignore
+    } finally {
+      setIsStateRestored(true);
     }
-    return 1;
-  });
+  }, []);
 
-  const [highlightedProductId, setHighlightedProductId] = useState<
-    string | null
-  >(null);
-
-  // Simpan perubahan state halaman/filter ke sessionStorage setiap kali berubah
+  // Simpan perubahan state halaman/filter ke sessionStorage setiap kali berubah (setelah state awal dipulihkan)
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!isStateRestored) return;
     try {
       const stateToSave: SavedTableState = {
         currentPage,
         pageSize,
         statusFilter,
+        categoryFilter,
         searchQuery,
       };
       sessionStorage.setItem(
@@ -165,7 +142,26 @@ export default function AdminProductTable({
     } catch {
       // ignore
     }
-  }, [currentPage, pageSize, statusFilter, searchQuery]);
+  }, [
+    isStateRestored,
+    currentPage,
+    pageSize,
+    statusFilter,
+    categoryFilter,
+    searchQuery,
+  ]);
+
+  // Reset filter kategori jika kategori yang dipilih sudah dihapus
+  useEffect(() => {
+    if (
+      categoryFilter !== "all" &&
+      categoryFilter !== "uncategorized" &&
+      categories.length > 0 &&
+      !categories.some((c) => c.id === categoryFilter)
+    ) {
+      setCategoryFilter("all");
+    }
+  }, [categoryFilter, categories]);
 
   // Sinkronisasi daftar produk otomatis untuk multi-user (saat tab fokus atau setiap 5 detik)
   useEffect(() => {
@@ -203,13 +199,41 @@ export default function AdminProductTable({
     [products]
   );
 
-  // Filter berdasarkan Card Status (All / Published / Draft) + Pencarian Cepat
+  // Hitung jumlah produk per kategori (dan tanpa kategori) untuk label dropdown filter
+  const { categoryCounts, uncategorizedCount } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let uncategorized = 0;
+    products.forEach((p) => {
+      if (p.category_id) {
+        counts[p.category_id] = (counts[p.category_id] || 0) + 1;
+      } else {
+        uncategorized += 1;
+      }
+    });
+    return { categoryCounts: counts, uncategorizedCount: uncategorized };
+  }, [products]);
+
+  const selectedCategoryLabel = useMemo(() => {
+    if (categoryFilter === "all") return null;
+    if (categoryFilter === "uncategorized") return "Tanpa Kategori";
+    return categories.find((c) => c.id === categoryFilter)?.name || "Kategori";
+  }, [categoryFilter, categories]);
+
+  // Filter berdasarkan Card Status (All / Published / Draft), Kategori & Pencarian Cepat
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return products.filter((p) => {
       const matchesStatus =
         statusFilter === "all" || p.status === statusFilter;
       if (!matchesStatus) return false;
+
+      const matchesCategory =
+        categoryFilter === "all"
+          ? true
+          : categoryFilter === "uncategorized"
+          ? !p.category_id
+          : p.category_id === categoryFilter;
+      if (!matchesCategory) return false;
 
       if (!q) return true;
       return (
@@ -218,7 +242,7 @@ export default function AdminProductTable({
         (p.categories?.name || "").toLowerCase().includes(q)
       );
     });
-  }, [products, statusFilter, searchQuery]);
+  }, [products, statusFilter, categoryFilter, searchQuery]);
 
   // Hitung total halaman & potong data sesuai halaman aktif
   const totalItems = filteredProducts.length;
@@ -226,7 +250,7 @@ export default function AdminProductTable({
 
   // Jika baru selesai Edit Produk tertentu, pastikan otomatis membuka halaman tempat produk tersebut berada
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!isStateRestored) return;
     const editedId = sessionStorage.getItem(ADMIN_LAST_EDITED_ID_KEY);
     if (!editedId) return;
 
@@ -244,14 +268,15 @@ export default function AdminProductTable({
     }, 4000);
 
     return () => clearTimeout(timer);
-  }, [filteredProducts, pageSize]);
+  }, [isStateRestored, filteredProducts, pageSize]);
 
   // Pastikan currentPage tetap valid saat filter atau jumlah produk berkurang
   useEffect(() => {
+    if (!isStateRestored) return;
     if (totalItems > 0 && currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [currentPage, totalPages, totalItems]);
+  }, [isStateRestored, currentPage, totalPages, totalItems]);
 
   const startIndex = (currentPage - 1) * pageSize;
   const paginatedProducts = filteredProducts.slice(
@@ -580,7 +605,7 @@ export default function AdminProductTable({
       {/* Header Daftar Produk + CTA Kelola Kategori & Tambah Produk */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h2 className="text-lg font-bold text-slate-900">Daftar Produk</h2>
             {statusFilter !== "all" && (
               <span
@@ -591,12 +616,28 @@ export default function AdminProductTable({
                     : "bg-amber-100 text-amber-800"
                 )}
               >
-                Filter: {statusFilter === "published" ? "Published" : "Draft"}
+                Status: {statusFilter === "published" ? "Published" : "Draft"}
                 <button
                   type="button"
                   onClick={() => setStatusFilter("all")}
                   className="ml-0.5 rounded-full p-0.5 hover:bg-black/10"
                   title="Hapus filter status"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {selectedCategoryLabel && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-semibold text-slate-800">
+                Kategori: {selectedCategoryLabel}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCategoryFilter("all");
+                    setCurrentPage(1);
+                  }}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-black/10"
+                  title="Hapus filter kategori"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -615,7 +656,11 @@ export default function AdminProductTable({
             filteredProducts={filteredProducts}
             selectedIds={selectedIds}
             categories={categories}
-            isFiltered={statusFilter !== "all" || Boolean(searchQuery.trim())}
+            isFiltered={
+              statusFilter !== "all" ||
+              categoryFilter !== "all" ||
+              Boolean(searchQuery.trim())
+            }
           />
           <AdminBulkKursModal products={products} categories={categories} />
           <AdminCategoryManager categories={categories} products={products} />
@@ -806,48 +851,89 @@ export default function AdminProductTable({
             </div>
           )}
 
-          {/* Toolbar Atas Tabel: Pencarian Cepat & Pilihan Jumlah Baris */}
-          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
-                placeholder="Cari nama produk atau kategori..."
-                className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
+          {/* Toolbar Atas Tabel: Pencarian Cepat, Filter Kategori & Pilihan Jumlah Baris */}
+          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/50 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center flex-1">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  placeholder="Cari nama produk atau kategori..."
+                  className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-8 text-xs text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setCurrentPage(1);
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Filter Per Kategori */}
+              <div className="relative w-full sm:w-auto sm:min-w-[210px]">
+                <Filter className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => {
+                    setCategoryFilter(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  aria-label="Filter berdasarkan kategori"
+                  className="w-full cursor-pointer rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-8 text-xs font-semibold text-slate-800 transition hover:border-slate-300 focus:border-slate-900 focus:outline-none"
                 >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
+                  <option value="all">
+                    Semua Kategori ({totalProducts})
+                  </option>
+                  {uncategorizedCount > 0 && (
+                    <option value="uncategorized">
+                      Tanpa Kategori ({uncategorizedCount})
+                    </option>
+                  )}
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name} ({categoryCounts[cat.id] || 0})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-slate-600">
-              <span>Tampilkan:</span>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value));
-                  setCurrentPage(1);
-                }}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:border-slate-900 focus:outline-none"
-              >
-                <option value={10}>10 baris</option>
-                <option value={20}>20 baris</option>
-                <option value={50}>50 baris</option>
-              </select>
+            <div className="flex items-center justify-between sm:justify-end gap-3 text-xs text-slate-600">
+              {(statusFilter !== "all" ||
+                categoryFilter !== "all" ||
+                searchQuery.trim() !== "") && (
+                <span className="text-[11px] font-medium text-slate-500">
+                  Hasil:{" "}
+                  <strong className="text-slate-900">{totalItems}</strong>{" "}
+                  produk
+                </span>
+              )}
+              <div className="flex items-center gap-2">
+                <span>Tampilkan:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:border-slate-900 focus:outline-none"
+                >
+                  <option value={10}>10 baris</option>
+                  <option value={20}>20 baris</option>
+                  <option value={50}>50 baris</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -881,17 +967,42 @@ export default function AdminProductTable({
                   <tr>
                     <td
                       colSpan={7}
-                      className="px-6 py-10 text-center text-xs text-slate-400"
+                      className="px-6 py-10 text-center text-xs text-slate-500"
                     >
-                      Tidak ada produk{" "}
-                      {statusFilter !== "all"
-                        ? `berstatus "${
-                            statusFilter === "published" ? "Published" : "Draft"
-                          }" `
-                        : ""}
-                      {searchQuery
-                        ? `yang cocok dengan pencarian "${searchQuery}".`
-                        : "pada kategori ini."}
+                      <div className="flex flex-col items-center gap-2">
+                        <span>
+                          Tidak ada produk{" "}
+                          {statusFilter !== "all"
+                            ? `berstatus "${
+                                statusFilter === "published"
+                                  ? "Published"
+                                  : "Draft"
+                              }" `
+                            : ""}
+                          {selectedCategoryLabel
+                            ? `dalam kategori "${selectedCategoryLabel}" `
+                            : ""}
+                          {searchQuery
+                            ? `yang cocok dengan pencarian "${searchQuery}".`
+                            : "yang sesuai filter saat ini."}
+                        </span>
+                        {(statusFilter !== "all" ||
+                          categoryFilter !== "all" ||
+                          searchQuery) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStatusFilter("all");
+                              setCategoryFilter("all");
+                              setSearchQuery("");
+                              setCurrentPage(1);
+                            }}
+                            className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Reset Filter
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ) : (
