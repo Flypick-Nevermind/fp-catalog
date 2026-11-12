@@ -696,13 +696,34 @@ export async function deleteCategoryAction(
 
     const supabase = createSupabaseAdmin();
 
-    const { error } = await supabase
+    // 1. Lepaskan relasi produk dari kategori ini terlebih dahulu (jadikan Tanpa Kategori)
+    //    agar tidak terblokir Foreign Key Constraint jika DB belum memakai ON DELETE SET NULL.
+    const { error: unlinkError } = await supabase
+      .from("products")
+      .update({ category_id: null })
+      .eq("category_id", categoryId);
+
+    if (unlinkError) {
+      throw new Error(
+        `Gagal melepaskan produk dari kategori: ${unlinkError.message}`
+      );
+    }
+
+    // 2. Hapus kategori dan pastikan baris benar-benar terhapus
+    const { data: deletedRows, error } = await supabase
       .from("categories")
       .delete()
-      .eq("id", categoryId);
+      .eq("id", categoryId)
+      .select("id");
 
     if (error) {
       throw new Error(error.message);
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+      throw new Error(
+        "Kategori gagal dihapus atau tidak ditemukan di database."
+      );
     }
 
     revalidatePath("/", "layout");

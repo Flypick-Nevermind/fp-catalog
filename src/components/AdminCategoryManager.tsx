@@ -38,6 +38,7 @@ export default function AdminCategoryManager({
   const [isUpdating, setIsUpdating] = useState(false);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const getProductCount = (categoryId: string) =>
@@ -48,6 +49,7 @@ export default function AdminCategoryManager({
     if (!newName.trim()) return;
 
     setErrorMsg(null);
+    setConfirmDeleteId(null);
     setIsCreating(true);
     const res = await createCategoryAction(newName);
     setIsCreating(false);
@@ -63,6 +65,7 @@ export default function AdminCategoryManager({
 
   const handleStartEdit = (cat: Category) => {
     setErrorMsg(null);
+    setConfirmDeleteId(null);
     setEditingId(cat.id);
     setEditingName(cat.name);
   };
@@ -85,15 +88,7 @@ export default function AdminCategoryManager({
     router.refresh();
   };
 
-  const handleDelete = async (cat: Category) => {
-    const count = getProductCount(cat.id);
-    const confirmMessage =
-      count > 0
-        ? `Hapus kategori "${cat.name}"? (${count} produk di kategori ini akan menjadi 'Tanpa Kategori')`
-        : `Hapus kategori "${cat.name}"?`;
-
-    if (!window.confirm(confirmMessage)) return;
-
+  const handleConfirmDelete = async (cat: Category) => {
     setErrorMsg(null);
     setDeletingId(cat.id);
     const res = await deleteCategoryAction(cat.id);
@@ -104,6 +99,7 @@ export default function AdminCategoryManager({
       return;
     }
 
+    setConfirmDeleteId(null);
     router.refresh();
   };
 
@@ -113,6 +109,7 @@ export default function AdminCategoryManager({
         type="button"
         onClick={() => {
           setErrorMsg(null);
+          setConfirmDeleteId(null);
           setIsOpen(true);
         }}
         className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
@@ -141,22 +138,33 @@ export default function AdminCategoryManager({
               </div>
               <button
                 type="button"
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  setConfirmDeleteId(null);
+                  setIsOpen(false);
+                }}
                 className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
+            {/* Banner Error Pinned di Atas Scroll Area agar selalu terlihat */}
+            {errorMsg && (
+              <div className="mx-6 mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                <span className="flex-1">{errorMsg}</span>
+                <button
+                  type="button"
+                  onClick={() => setErrorMsg(null)}
+                  className="text-red-500 hover:text-red-800"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* Body Modal */}
             <div className="flex-1 space-y-5 overflow-y-auto p-6">
-              {errorMsg && (
-                <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-
               {/* Form Tambah Kategori Baru */}
               <form onSubmit={handleCreate} className="flex gap-2">
                 <input
@@ -189,94 +197,135 @@ export default function AdminCategoryManager({
                 <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200">
                   {categories.map((cat) => {
                     const isEditing = editingId === cat.id;
+                    const isConfirmingDelete = confirmDeleteId === cat.id;
                     const isDeleting = deletingId === cat.id;
                     const count = getProductCount(cat.id);
 
                     return (
                       <div
                         key={cat.id}
-                        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50/70"
+                        className="px-4 py-3 hover:bg-slate-50/70"
                       >
-                        {isEditing ? (
-                          <div className="flex flex-1 items-center gap-2">
-                            <input
-                              type="text"
-                              autoFocus
-                              value={editingName}
-                              onChange={(e) => setEditingName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  handleSaveEdit(cat.id);
-                                } else if (e.key === "Escape") {
-                                  setEditingId(null);
-                                }
-                              }}
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              disabled={isUpdating}
-                              onClick={() => handleSaveEdit(cat.id)}
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                              title="Simpan"
-                            >
-                              {isUpdating ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Check className="h-4 w-4" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditingId(null)}
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-100"
-                              title="Batal"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold text-slate-900">
-                                  {cat.name}
-                                </span>
-                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                                  {count} produk
-                                </span>
-                              </div>
-                              <div className="text-[11px] text-slate-400">
-                                /{cat.slug}
-                              </div>
+                        <div className="flex items-center justify-between gap-3">
+                          {isEditing ? (
+                            <div className="flex flex-1 items-center gap-2">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleSaveEdit(cat.id);
+                                  } else if (e.key === "Escape") {
+                                    setEditingId(null);
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                disabled={isUpdating}
+                                onClick={() => handleSaveEdit(cat.id)}
+                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                                title="Simpan"
+                              >
+                                {isUpdating ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Check className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingId(null)}
+                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-100"
+                                title="Batal"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
                             </div>
+                          ) : (
+                            <>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-semibold text-slate-900">
+                                    {cat.name}
+                                  </span>
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                                    {count} produk
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  /{cat.slug}
+                                </div>
+                              </div>
 
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEdit(cat)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
+                                  title="Ubah Nama Kategori"
+                                >
+                                  <Edit3 className="h-3.5 w-3.5" />
+                                  <span>Edit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isDeleting}
+                                  onClick={() => {
+                                    setErrorMsg(null);
+                                    setEditingId(null);
+                                    setConfirmDeleteId(
+                                      isConfirmingDelete ? null : cat.id
+                                    );
+                                  }}
+                                  className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50/50 p-1.5 text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+                                  title="Hapus Kategori"
+                                >
+                                  {isDeleting ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Konfirmasi Hapus Inline (tanpa window.confirm) */}
+                        {isConfirmingDelete && !isEditing && (
+                          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-200 bg-red-50/80 px-3 py-2 text-xs">
+                            <span className="font-medium text-red-800">
+                              {count > 0
+                                ? `Hapus "${cat.name}"? (${count} produk akan jadi Tanpa Kategori)`
+                                : `Yakin ingin menghapus kategori "${cat.name}"?`}
+                            </span>
                             <div className="flex items-center gap-1.5">
                               <button
                                 type="button"
-                                onClick={() => handleStartEdit(cat)}
-                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 hover:text-slate-900"
-                                title="Ubah Nama Kategori"
+                                disabled={isDeleting}
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
                               >
-                                <Edit3 className="h-3.5 w-3.5" />
-                                <span>Edit</span>
+                                Batal
                               </button>
                               <button
                                 type="button"
                                 disabled={isDeleting}
-                                onClick={() => handleDelete(cat)}
-                                className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50/50 p-1.5 text-red-600 transition hover:bg-red-100 disabled:opacity-50"
-                                title="Hapus Kategori"
+                                onClick={() => handleConfirmDelete(cat)}
+                                className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
                               >
                                 {isDeleting ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                )}
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : null}
+                                <span>Ya, Hapus</span>
                               </button>
                             </div>
-                          </>
+                          </div>
                         )}
                       </div>
                     );
