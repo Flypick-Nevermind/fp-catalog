@@ -64,6 +64,7 @@ export function InquiryCartProvider({
 }) {
   const pathname = usePathname();
   const isAdminPage = pathname?.startsWith("/admin");
+  const isProductDetailPage = pathname?.startsWith("/product/");
 
   const [items, setItems] = useState<InquiryItem[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -235,7 +236,11 @@ export function InquiryCartProvider({
         <>
           {/* Floating Button / Bar "Daftar Titipan" */}
           {totalCount > 0 && !isDrawerOpen && (
-            <div className="fixed bottom-20 right-4 z-40 sm:bottom-6 sm:right-6 animate-in fade-in slide-in-from-bottom-5 duration-300">
+            <div
+              className={`fixed right-4 z-40 sm:bottom-6 sm:right-6 animate-in fade-in slide-in-from-bottom-5 duration-300 ${
+                isProductDetailPage ? "bottom-20" : "bottom-5"
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => setIsDrawerOpen(true)}

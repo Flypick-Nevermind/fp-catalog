@@ -217,7 +217,7 @@ export default async function ProductDetailPage({
       </header>
 
       {/* Konten Detail Produk */}
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl px-4 pt-8 pb-24 sm:px-6 sm:py-8 lg:px-8">
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-12">
           {/* Kolom Kiri (Galeri Interaktif Multi-Foto) */}
           <div className="lg:col-span-6">
