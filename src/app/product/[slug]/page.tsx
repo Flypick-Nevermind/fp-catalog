@@ -71,9 +71,37 @@ async function getPublishedProductBySlug(
   return data as Product;
 }
 
+const STOP_WORDS = new Set([
+  "dan",
+  "yang",
+  "untuk",
+  "dengan",
+  "dari",
+  "the",
+  "and",
+  "for",
+  "with",
+  "new",
+  "ori",
+  "original",
+  "jastip",
+  "promo",
+  "murah",
+]);
+
+function extractProductKeywords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+}
+
 /**
- * Mengambil maksimal 4 produk serupa (prioritas dari kategori yang sama,
- * lalu dilengkapi produk lain jika jumlahnya kurang dari 4).
+ * Mengambil maksimal 4 produk berelasi secara cerdas:
+ * - Prioritas kategori yang sama + kemiripan kata kunci nama produk + kedekatan harga
+ * - Ditambah variasi acak di antara kandidat relevan agar tidak selalu menampilkan 4 produk yang sama
+ * - Jika kurang dari 4, dilengkapi secara acak dari produk terpublikasi lainnya
  */
 async function getRelatedProducts(currentProduct: Product): Promise<Product[]> {
   if (
@@ -83,8 +111,10 @@ async function getRelatedProducts(currentProduct: Product): Promise<Product[]> {
     return [];
   }
 
-  const results: Product[] = [];
+  const candidates: Product[] = [];
+  const seenIds = new Set<string>([currentProduct.id]);
 
+  // 1. Ambil kandidat lebih banyak dari kategori yang sama (hingga 40 produk)
   if (currentProduct.category_id) {
     const { data: sameCategoryData } = await supabasePublic
       .from("products")
@@ -98,16 +128,20 @@ async function getRelatedProducts(currentProduct: Product): Promise<Product[]> {
       .eq("status", "published")
       .eq("category_id", currentProduct.category_id)
       .neq("id", currentProduct.id)
-      .order("created_at", { ascending: true })
-      .limit(4);
+      .limit(40);
 
     if (sameCategoryData) {
-      results.push(...(sameCategoryData as Product[]));
+      for (const item of sameCategoryData as Product[]) {
+        if (!seenIds.has(item.id)) {
+          seenIds.add(item.id);
+          candidates.push(item);
+        }
+      }
     }
   }
 
-  if (results.length < 4) {
-    const excludeIds = [currentProduct.id, ...results.map((r) => r.id)];
+  // 2. Jika kandidat dari kategori sama masih kurang dari 8, ambil tambahan produk lain untuk diacak
+  if (candidates.length < 8) {
     const { data: otherProducts } = await supabasePublic
       .from("products")
       .select(
@@ -118,16 +152,64 @@ async function getRelatedProducts(currentProduct: Product): Promise<Product[]> {
       `
       )
       .eq("status", "published")
-      .not("id", "in", `(${excludeIds.join(",")})`)
-      .order("created_at", { ascending: true })
-      .limit(4 - results.length);
+      .neq("id", currentProduct.id)
+      .limit(30);
 
     if (otherProducts) {
-      results.push(...(otherProducts as Product[]));
+      for (const item of otherProducts as Product[]) {
+        if (!seenIds.has(item.id)) {
+          seenIds.add(item.id);
+          candidates.push(item);
+        }
+      }
     }
   }
 
-  return results;
+  if (candidates.length === 0) return [];
+
+  const currentKeywords = extractProductKeywords(currentProduct.name);
+  const currentPrice = Number(currentProduct.price) || 0;
+
+  // 3. Hitung skor relevansi + variasi acak agar produk tetap berelasi namun bervariasi
+  const scored = candidates.map((item) => {
+    let score = 0;
+
+    // Prioritas kategori sama
+    if (
+      currentProduct.category_id &&
+      item.category_id === currentProduct.category_id
+    ) {
+      score += 100;
+    }
+
+    // Kemiripan kata kunci pada nama produk (misal merek / jenis yang sama)
+    if (currentKeywords.length > 0) {
+      const itemNameLower = item.name.toLowerCase();
+      let matchedCount = 0;
+      for (const kw of currentKeywords) {
+        if (itemNameLower.includes(kw)) {
+          matchedCount += 1;
+        }
+      }
+      score += matchedCount * 35;
+    }
+
+    // Kedekatan rentang harga (maks +15)
+    const itemPrice = Number(item.price) || 0;
+    if (currentPrice > 0 && itemPrice > 0) {
+      const ratio = Math.abs(itemPrice - currentPrice) / currentPrice;
+      if (ratio <= 0.3) score += 15;
+      else if (ratio <= 0.6) score += 8;
+    }
+
+    // Faktor acak agar pilihan dari kandidat yang setara selalu segar
+    score += Math.random() * 25;
+
+    return { item, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 4).map((entry) => entry.item);
 }
 
 export async function generateMetadata({
